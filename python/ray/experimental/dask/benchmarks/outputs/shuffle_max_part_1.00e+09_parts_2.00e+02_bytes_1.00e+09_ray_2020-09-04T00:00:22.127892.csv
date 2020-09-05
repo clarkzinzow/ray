@@ -1,0 +1,2 @@
+system,operation,num_nodes,nbytes,npartitions,duration
+ray,groupby,1,1000000000,200,166.01436519622803
