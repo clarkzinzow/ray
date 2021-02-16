@@ -26,6 +26,7 @@ This will print out some statistics on the shuffle execution such as:
 from typing import List, Iterable, Tuple, Callable, Any
 
 import ray
+from ray.cluster_utils import Cluster
 from ray import ObjectRef
 
 # TODO(ekl) why doesn't TypeVar() deserialize properly in Ray?
@@ -172,7 +173,20 @@ def main():
     if args.ray_address:
         ray.init(address=args.ray_address)
     else:
-        ray.init(object_store_memory=args.object_store_memory)
+        # ray.init(
+        #     object_store_memory=args.object_store_memory,
+        #     _system_config={"ownership_based_object_directory_enabled": True})
+        system_config = {"ownership_based_object_directory_enabled": False}
+        cluster = Cluster(
+            initialize_head=True,
+            connect=True,
+            head_node_args={
+                "object_store_memory": args.object_store_memory,
+                "_system_config": system_config,
+            })
+        cluster.add_node(object_store_memory=args.object_store_memory)
+        cluster.add_node(object_store_memory=args.object_store_memory)
+        cluster.add_node(object_store_memory=args.object_store_memory)
 
     partition_size = int(args.partition_size)
     num_partitions = args.num_partitions
