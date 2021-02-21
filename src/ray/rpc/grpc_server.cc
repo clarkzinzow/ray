@@ -117,6 +117,10 @@ void GrpcServer::PollEventsFromCompletionQueue(int index) {
       case ServerCallState::SENDING_REPLY:
         // GRPC has sent reply successfully, invoking the callback.
         server_call->OnReplySent();
+        break;
+      case ServerCallState::FINISHED:
+        // GRPC has sent reply successfully, invoking the callback.
+        server_call->OnReplySent();
         // The rpc call has finished and can be deleted now.
         delete_call = true;
         break;
@@ -128,11 +132,15 @@ void GrpcServer::PollEventsFromCompletionQueue(int index) {
       // `ok == false` will occur in two situations:
       // First, the server has been shut down, the server call's status is PENDING
       // Second, server has sent reply to client and failed, the server call's status is
-      // SENDING_REPLY
+      // either SENDING_REPLY or FINISHED
       if (server_call->GetState() == ServerCallState::SENDING_REPLY) {
         server_call->OnReplyFailed();
+      } else {
+        if (server_call->GetState() == ServerCallState::FINISHED) {
+          server_call->OnReplyFailed();
+        }
+        delete_call = true;
       }
-      delete_call = true;
     }
     if (delete_call) {
       delete server_call;

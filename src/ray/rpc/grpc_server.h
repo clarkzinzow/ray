@@ -40,6 +40,21 @@ namespace rpc {
                               rpc::METHOD##Reply *reply,           \
                               rpc::SendReplyCallback send_reply_callback) = 0;
 
+#define STREAMING_RPC_SERVICE_HANDLER(SERVICE, HANDLER)                               \
+  std::unique_ptr<ServerCallFactory> HANDLER##_call_factory(                          \
+      new StreamingServerCallFactoryImpl<SERVICE, SERVICE##Handler, HANDLER##Request, \
+                                         HANDLER##Reply>(                             \
+          service_, &SERVICE::AsyncService::Request##HANDLER, service_handler_,       \
+          &SERVICE##Handler::Handle##HANDLER, cq, main_service_));                    \
+  server_call_factories->emplace_back(std::move(HANDLER##_call_factory));
+
+// Define a void RPC client method.
+#define DECLARE_VOID_STREAMING_RPC_SERVICE_HANDLER_METHOD(METHOD)                  \
+  virtual void Handle##METHOD(const rpc::METHOD##Request &request,                 \
+                              rpc::METHOD##Reply *reply,                           \
+                              rpc::SendStreamingReplyCallback send_reply_callback, \
+                              rpc::SendFinishedCallback send_finished_callback) = 0;
+
 class GrpcService;
 
 /// Class that represents an gRPC server.

@@ -52,6 +52,11 @@ class ClientCallManager;
 template <class Reply>
 using ClientCallback = std::function<void(const Status &status, const Reply &reply)>;
 
+// TODO(Clark): Create a `StreamingClientCallImpl` for server-side streaming support.
+// TODO(Clark): Move the PollEventsFromCompletionQueue from the ClientCallManager to
+// GrpcClient? Or create a symmetrical ServerCallManager on the backend? Need to
+// understand why there are two different completion queue processing paradigms.
+
 /// Implementation of the `ClientCall`. It represents a `ClientCall` for a particular
 /// RPC method.
 ///
@@ -93,6 +98,7 @@ class ClientCallImpl : public ClientCall {
   ClientCallback<Reply> callback_;
 
   /// The response reader.
+  // TODO(Clark): Change this to ClientAsyncReader for server-side streaming.
   std::unique_ptr<grpc_impl::ClientAsyncResponseReader<Reply>> response_reader_;
 
   /// gRPC status of this request.
@@ -234,6 +240,9 @@ class ClientCallManager {
     // NOTE(edoakes): we use AsyncNext here because for some unknown reason,
     // synchronous cq_.Next blocks indefinitely in the case that the process
     // received a SIGTERM.
+
+    // TODO(Clark): Modify this loop to read from a server-side stream until a read
+    // fails with an error indicating that the stream has ended.
     while (true) {
       auto deadline = gpr_time_add(gpr_now(GPR_CLOCK_REALTIME),
                                    gpr_time_from_millis(250, GPR_TIMESPAN));
@@ -252,6 +261,8 @@ class ClientCallManager {
           // Post the callback to the main event loop.
           main_service_.post([tag]() {
             tag->GetCall()->OnReplyReceived();
+            // TODO(Clark): Only delete tag if server has indicated that it is done
+            // sending on the response stream.
             // The call is finished, and we can delete this tag now.
             delete tag;
           });
