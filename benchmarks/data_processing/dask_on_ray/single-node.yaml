@@ -47,7 +47,7 @@ provider:
     availability_zone: us-east-2a
     # Whether to allow node reuse. If set to False, nodes will be terminated
     # instead of stopped.
-    cache_stopped_nodes: True # If not present, the default is True.
+    cache_stopped_nodes: False # If not present, the default is True.
 
 # How Ray will authenticate with newly launched nodes.
 auth:
@@ -92,10 +92,10 @@ worker_nodes:
 
 # Files or directories to copy to the head and worker nodes. The format is a
 # dictionary from REMOTE_PATH: LOCAL_PATH, e.g.
-file_mounts: {
-    "/home/ubuntu/dask-on-ray/": "/home/swang/ray/dask-on-ray-shuffle",
-    "/home/ubuntu/dotfiles/": "/home/swang/dotfiles",
-}
+# file_mounts: {
+#     "/home/ubuntu/dask-on-ray/": "/home/swang/ray/dask-on-ray-shuffle",
+#     "/home/ubuntu/dotfiles/": "/home/swang/dotfiles",
+# }
 
 # Files or directories to copy from the head node to the worker nodes. The format is a
 # list of paths. The same path on the head node will be copied to the worker node.
@@ -127,9 +127,9 @@ initialization_commands: []
 setup_commands:
     - echo 'export PATH="$HOME/anaconda3/envs/tensorflow_p36/bin:$PATH"' >> ~/.bashrc
     #- pip install -U https://s3-us-west-2.amazonaws.com/ray-wheels/latest/ray-2.0.0.dev0-cp36-cp36m-manylinux2014_x86_64.whl
-    - pip install -U https://s3-us-west-2.amazonaws.com/ray-wheels/master/fe8a500e98a2ab8cb8c28a832207d6b5b12e1b9f/ray-2.0.0.dev0-cp37-cp37m-manylinux2014_x86_64.whl
-    - pip install -U dask==2.18.0 distributed==2.18.0
-    - source activate tensorflow_p36 && if [[ -z $(pip freeze | grep fastparquet) ]]; then conda install -y -c conda-forge fastparquet; fi 
+    - pip install -U --user https://s3-us-west-2.amazonaws.com/ray-wheels/master/566dcea56aedf0d920f94410faaff58d66c50370/ray-2.0.0.dev0-cp37-cp37m-manylinux2014_x86_64.whl
+    - pip install -U --user dask==2.18.0 distributed==2.18.0 fastparquet
+    - mkdir -p /tmp/ray/parquet-data
     # Note: if you're developing Ray, you probably want to create a Docker image that
     # has your Ray repo pre-cloned. Then, you can replace the pip installs
     # below with a git checkout <your_sha> (and possibly a recompile).
