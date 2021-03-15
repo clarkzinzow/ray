@@ -15,7 +15,7 @@ from dask.distributed import Client
 import time
 
 # DATA_DIR = "~/dask-on-ray-data"
-DATA_DIR = "/tmp/ray/parquet-data"
+DATA_DIR = "/mnt/disk0/benchmark_scratch"
 
 
 def load_dataset(nbytes, npartitions, sort):
