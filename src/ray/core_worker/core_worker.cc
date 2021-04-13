@@ -145,7 +145,7 @@ CoreWorker::CoreWorker(const CoreWorkerOptions &options, const WorkerID &worker_
   // so that the worker (java/python .etc) can retrieve and handle the error
   // instead of crashing.
   auto grpc_client = rpc::NodeManagerWorkerClient::make(
-      options_.raylet_ip_address, options_.node_manager_port, *client_call_manager_);
+      options_.raylet_ip_address, options_.node_manager_port, io_service_);
 
   if (options_.worker_type != WorkerType::DRIVER) {
     periodical_runner_.RunFnPeriodically(
@@ -401,8 +401,7 @@ CoreWorker::CoreWorker(const CoreWorkerOptions &options, const WorkerID &worker_
   }
 
   auto raylet_client_factory = [this](const std::string ip_address, int port) {
-    auto grpc_client =
-        rpc::NodeManagerWorkerClient::make(ip_address, port, *client_call_manager_);
+    auto grpc_client = rpc::NodeManagerWorkerClient::make(ip_address, port, io_service_);
     return std::shared_ptr<raylet::RayletClient>(
         new raylet::RayletClient(std::move(grpc_client)));
   };
@@ -1660,10 +1659,9 @@ void CoreWorker::SpillOwnedObject(const ObjectID &object_id,
 
   // Ask the raylet to spill the object.
   RAY_LOG(DEBUG) << "Sending spill request to raylet for object " << object_id;
-  auto raylet_client = std::make_shared<raylet::RayletClient>(
-      rpc::NodeManagerWorkerClient::make(node->node_manager_address(),
-                                         node->node_manager_port(),
-                                         *client_call_manager_));
+  auto raylet_client =
+      std::make_shared<raylet::RayletClient>(rpc::NodeManagerWorkerClient::make(
+          node->node_manager_address(), node->node_manager_port(), io_service_));
   raylet_client->RequestObjectSpillage(
       object_id,
       [object_id, callback](const Status &status,

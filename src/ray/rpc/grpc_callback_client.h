@@ -35,12 +35,14 @@ using AsyncUnaryMethod = void (GrpcService::StubInterface::async_interface::*)(
 
 template <class GrpcService, class Request, class Reply>
 using AsyncClientStreamingMethod = void (GrpcService::StubInterface::async_interface::*)(
-    grpc::ClientContext *context, Reply *response,
+    grpc::ClientContext *context,
+    Reply *response,
     grpc::ClientWriteReactor<Request> *reactor);
 
 template <class GrpcService, class Request, class Reply>
 using AsyncServerStreamingMethod = void (GrpcService::StubInterface::async_interface::*)(
-    grpc::ClientContext *context, Request *request,
+    grpc::ClientContext *context,
+    Request *request,
     grpc::ClientReadReactor<Reply> *reactor);
 
 template <class GrpcService, class Request, class Reply>
@@ -55,19 +57,24 @@ using AsyncBidiStreamingMethod = void (GrpcService::StubInterface::async_interfa
     rpc_client->CallUnaryMethod<METHOD##Request, METHOD##Reply>(                \
         static_cast<AsyncUnaryMethod<SERVICE, METHOD##Request, METHOD##Reply>>( \
             &SERVICE::Stub::async::METHOD),                                     \
-        request, callback, ctx, #SERVICE ".grpc_client." #METHOD);              \
+        request,                                                                \
+        callback,                                                               \
+        ctx,                                                                    \
+        #SERVICE ".grpc_client." #METHOD);                                      \
   }
 
 // Define a client-side streaming RPC client method that requires a reactor.
 #define CLIENT_STREAMING_REACTOR_RPC_CLIENT_METHOD(METHOD, rpc_client, SPECS) \
-  void METHOD(grpc::ClientContext *ctx, METHOD##Reply *reply,                 \
+  void METHOD(grpc::ClientContext *ctx,                                       \
+              METHOD##Reply *reply,                                           \
               grpc::ClientWriteReactor<METHOD##Request> reactor) SPECS {      \
     return rpc_client->GetStub()->async()->METHOD(ctx, reply, reactor);       \
   }
 
 // Define a server-side streaming RPC client method that requires a reactor.
 #define SERVER_STREAMING_REACTOR_RPC_CLIENT_METHOD(METHOD, rpc_client, SPECS) \
-  void METHOD(grpc::ClientContext *ctx, METHOD##Request *request,             \
+  void METHOD(grpc::ClientContext *ctx,                                       \
+              METHOD##Request *request,                                       \
               grpc::ClientReadReactor<METHOD##Reply> reactor) SPECS {         \
     return rpc_client->GetStub()->async()->METHOD(ctx, request, reactor);     \
   }
@@ -95,7 +102,8 @@ class GrpcCallbackClient;
 template <class GrpcService, class Request, class Reply>
 class ClientWriterReactor : public grpc::ClientWriteReactor<Request> {
  public:
-  ClientWriterReactor(ClientCallback<Reply> callback, const std::string call_name,
+  ClientWriterReactor(ClientCallback<Reply> callback,
+                      const std::string call_name,
                       instrumented_io_context &io_context)
       : callback_(std::move(callback)),
         call_name_(std::move(call_name)),
@@ -202,7 +210,9 @@ class ClientStreamingWriter {
         static_cast<                                                                    \
             AsyncClientStreamingMethod<SERVICE, METHOD##Request, METHOD##Reply>>(       \
             &SERVICE::Stub::async::METHOD),                                             \
-        callback, ctx, #SERVICE ".grpc_client." #METHOD);                               \
+        callback,                                                                       \
+        ctx,                                                                            \
+        #SERVICE ".grpc_client." #METHOD);                                              \
   }
 
 ///
@@ -212,8 +222,10 @@ class ClientStreamingWriter {
 template <class GrpcService>
 class GrpcCallbackClient {
  public:
-  GrpcCallbackClient(const std::string &address, const int port,
-                     instrumented_io_context &io_context, int num_threads = 1)
+  GrpcCallbackClient(const std::string &address,
+                     const int port,
+                     instrumented_io_context &io_context,
+                     int num_threads = 1)
       : io_context_(io_context) {
     grpc::ChannelArguments argument;
     if (num_threads > 1) {
@@ -228,7 +240,8 @@ class GrpcCallbackClient {
     argument.SetMaxReceiveMessageSize(::RayConfig::instance().max_grpc_message_size());
     std::shared_ptr<grpc::Channel> channel =
         grpc::CreateCustomChannel(address + ":" + std::to_string(port),
-                                  grpc::InsecureChannelCredentials(), argument);
+                                  grpc::InsecureChannelCredentials(),
+                                  argument);
     stub_ = GrpcService::NewStub(channel);
     shutdown_ = std::make_shared<std::atomic<bool>>(false);
   }
@@ -250,7 +263,8 @@ class GrpcCallbackClient {
   /// event loop statistics collection.
   template <class Request, class Reply>
   void CallUnaryMethod(const AsyncUnaryMethod<GrpcService, Request, Reply> method,
-                       const Request &request, const ClientCallback<Reply> &callback,
+                       const Request &request,
+                       const ClientCallback<Reply> &callback,
                        std::shared_ptr<grpc::ClientContext> ctx = nullptr,
                        const std::string call_name = "UNKNOWN_RPC") {
     // We use shared pointers for the client context and response in order to let the
@@ -264,7 +278,9 @@ class GrpcCallbackClient {
     auto response = std::make_shared<Reply>();
     auto stats_handle = io_context_.stats().RecordStart(call_name);
     (stub_->async()->*method)(
-        ctx.get(), &request, response.get(),
+        ctx.get(),
+        &request,
+        response.get(),
         // NOTE: The below callback will be called in the gRPC nexting thread.
         //
         // We directly capture the io_context_ by reference instead of just
@@ -280,13 +296,18 @@ class GrpcCallbackClient {
         // until the gRPC-level callback is invoked, which is required.
         //
         // TODO(Clark): Make this lifetime management nicer.
-        [&io_context = io_context_, response, callback = std::move(callback), ctx,
-         shutdown = shutdown_, stats_handle = std::move(stats_handle)](auto status) {
+        [&io_context = io_context_,
+         response,
+         callback = std::move(callback),
+         ctx,
+         shutdown = shutdown_,
+         stats_handle = std::move(stats_handle)](auto status) {
           // Tell the compiler that we need ctx in this closure even though it
           // isn't referenced (this prevents an unused lambda capture warning).
           static_cast<void>(ctx);
           if (!shutdown->load() && !io_context.stopped()) {
-            io_context.post([response, callback = std::move(callback),
+            io_context.post([response,
+                             callback = std::move(callback),
                              status = GrpcStatusToRayStatus(
                                  status)]() { callback(status, *response); },
                             std::move(stats_handle));

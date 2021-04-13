@@ -56,8 +56,10 @@ namespace rpc {
       io_context_.post(                                                               \
           [this, request, reply, reactor]() {                                         \
             service_handler_.Handle##HANDLER(                                         \
-                *request, reply,                                                      \
-                [this, reactor](Status status, std::function<void()> success,         \
+                *request,                                                             \
+                reply,                                                                \
+                [this, reactor](Status status,                                        \
+                                std::function<void()> success,                        \
                                 std::function<void()> failure) {                      \
                   reactor->Finish(RayStatusToGrpcStatus(status));                     \
                   if (success != nullptr && !io_context_.stopped()) {                 \
@@ -98,7 +100,8 @@ class GrpcCallbackServer {
   /// \param[in] shutdown_deadline_ms The deadline for gracefully shutting down the gRPC
   ///  server, in milliseconds. After this deadline expires, forced RPC cancellation will
   ///  take place. By default, this is 0.
-  GrpcCallbackServer(std::string name, const uint32_t port,
+  GrpcCallbackServer(std::string name,
+                     const uint32_t port,
                      int64_t shutdown_deadline_ms = 0);
 
   /// Destruct this gRPC server.

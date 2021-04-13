@@ -24,7 +24,8 @@
 namespace ray {
 namespace rpc {
 
-GrpcCallbackServer::GrpcCallbackServer(std::string name, const uint32_t port,
+GrpcCallbackServer::GrpcCallbackServer(std::string name,
+                                       const uint32_t port,
                                        int64_t shutdown_deadline_ms)
     : name_(std::move(name)), port_(port), shutdown_deadline_ms_(shutdown_deadline_ms) {}
 

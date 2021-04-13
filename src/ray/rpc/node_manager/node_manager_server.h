@@ -15,39 +15,12 @@
 #pragma once
 
 #include "ray/common/asio/instrumented_io_context.h"
-#include "ray/rpc/grpc_server.h"
-#include "ray/rpc/server_call.h"
+#include "ray/rpc/grpc_callback_server.h"
 #include "src/ray/protobuf/node_manager.grpc.pb.h"
 #include "src/ray/protobuf/node_manager.pb.h"
 
 namespace ray {
 namespace rpc {
-
-/// NOTE: See src/ray/core_worker/core_worker.h on how to add a new grpc handler.
-#define RAY_NODE_MANAGER_RPC_HANDLERS                                 \
-  RPC_SERVICE_HANDLER(NodeManagerService, UpdateResourceUsage, -1)    \
-  RPC_SERVICE_HANDLER(NodeManagerService, RequestResourceReport, -1)  \
-  RPC_SERVICE_HANDLER(NodeManagerService, GetResourceLoad, -1)        \
-  RPC_SERVICE_HANDLER(NodeManagerService, NotifyGCSRestart, -1)       \
-  RPC_SERVICE_HANDLER(NodeManagerService, RequestWorkerLease, -1)     \
-  RPC_SERVICE_HANDLER(NodeManagerService, ReportWorkerBacklog, -1)    \
-  RPC_SERVICE_HANDLER(NodeManagerService, ReturnWorker, -1)           \
-  RPC_SERVICE_HANDLER(NodeManagerService, ReleaseUnusedWorkers, -1)   \
-  RPC_SERVICE_HANDLER(NodeManagerService, CancelWorkerLease, -1)      \
-  RPC_SERVICE_HANDLER(NodeManagerService, PinObjectIDs, -1)           \
-  RPC_SERVICE_HANDLER(NodeManagerService, GetNodeStats, -1)           \
-  RPC_SERVICE_HANDLER(NodeManagerService, GlobalGC, -1)               \
-  RPC_SERVICE_HANDLER(NodeManagerService, FormatGlobalMemoryInfo, -1) \
-  RPC_SERVICE_HANDLER(NodeManagerService, PrepareBundleResources, -1) \
-  RPC_SERVICE_HANDLER(NodeManagerService, CommitBundleResources, -1)  \
-  RPC_SERVICE_HANDLER(NodeManagerService, CancelResourceReserve, -1)  \
-  RPC_SERVICE_HANDLER(NodeManagerService, RequestObjectSpillage, -1)  \
-  RPC_SERVICE_HANDLER(NodeManagerService, ReleaseUnusedBundles, -1)   \
-  RPC_SERVICE_HANDLER(NodeManagerService, GetSystemConfig, -1)        \
-  RPC_SERVICE_HANDLER(NodeManagerService, ShutdownRaylet, -1)         \
-  RPC_SERVICE_HANDLER(NodeManagerService, GetTasksInfo, -1)           \
-  RPC_SERVICE_HANDLER(NodeManagerService, GetObjectsInfo, -1)         \
-  RPC_SERVICE_HANDLER(NodeManagerService, GetTaskFailureCause, -1)
 
 /// Interface of the `NodeManagerService`, see `src/ray/protobuf/node_manager.proto`.
 class NodeManagerServiceHandler {
@@ -160,33 +133,33 @@ class NodeManagerServiceHandler {
                                          SendReplyCallback send_reply_callback) = 0;
 };
 
-/// The `GrpcService` for `NodeManagerService`.
-class NodeManagerGrpcService : public GrpcService {
- public:
-  /// Constructor.
-  ///
-  /// \param[in] io_service See super class.
-  /// \param[in] handler The service handler that actually handle the requests.
-  NodeManagerGrpcService(instrumented_io_context &io_service,
-                         NodeManagerServiceHandler &service_handler)
-      : GrpcService(io_service), service_handler_(service_handler){};
+/// NOTE: See src/ray/core_worker/core_worker.h on how to add a new grpc handler.
+#define RAY_NODE_MANAGER_RPC_HANDLERS                                                \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, UpdateResourceUsage, -1)    \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, RequestResourceReport, -1)  \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, GetResourceLoad, -1)        \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, NotifyGCSRestart, -1)       \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, RequestWorkerLease, -1)     \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, ReportWorkerBacklog, -1)    \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, ReturnWorker, -1)           \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, ReleaseUnusedWorkers, -1)   \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, CancelWorkerLease, -1)      \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, PinObjectIDs, -1)           \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, GetNodeStats, -1)           \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, GlobalGC, -1)               \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, FormatGlobalMemoryInfo, -1) \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, PrepareBundleResources, -1) \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, CommitBundleResources, -1)  \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, CancelResourceReserve, -1)  \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, RequestObjectSpillage, -1)  \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, ReleaseUnusedBundles, -1)   \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, GetSystemConfig, -1)        \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, ShutdownRaylet, -1)         \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, GetTasksInfo, -1)           \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, GetObjectsInfo, -1)         \
+  UNARY_CALLBACK_RPC_SERVICE_HANDLER(NodeManagerService, GetTaskFailureCause, -1)
 
- protected:
-  grpc::Service &GetGrpcService() override { return service_; }
-
-  void InitServerCallFactories(
-      const std::unique_ptr<grpc::ServerCompletionQueue> &cq,
-      std::vector<std::unique_ptr<ServerCallFactory>> *server_call_factories) override {
-    RAY_NODE_MANAGER_RPC_HANDLERS
-  }
-
- private:
-  /// The grpc async service object.
-  NodeManagerService::AsyncService service_;
-
-  /// The service handler that actually handle the requests.
-  NodeManagerServiceHandler &service_handler_;
-};
+CALLBACK_SERVICE(NodeManagerService, RAY_NODE_MANAGER_RPC_HANDLERS)
 
 }  // namespace rpc
 }  // namespace ray
