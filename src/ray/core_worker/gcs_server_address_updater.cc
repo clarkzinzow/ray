@@ -28,9 +28,8 @@ GcsServerAddressUpdater::GcsServerAddressUpdater(
     boost::asio::io_service::work io_service_work_(updater_io_service_);
     updater_io_service_.run();
   }));
-  client_call_manager_.reset(new rpc::ClientCallManager(updater_io_service_));
   auto grpc_client =
-      rpc::NodeManagerWorkerClient::make(raylet_ip_address, port, *client_call_manager_);
+      rpc::NodeManagerWorkerClient::make(raylet_ip_address, port, updater_io_service_);
   raylet_client_ = std::make_shared<raylet::RayletClient>(grpc_client);
   // Init updater runner.
   updater_runner_.reset(new PeriodicalRunner(updater_io_service_));
