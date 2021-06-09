@@ -442,6 +442,10 @@ void CoreWorkerDirectTaskReceiver::HandleTask(
 
   if (task_spec.IsActorCreationTask()) {
     SetMaxActorConcurrency(task_spec.IsAsyncioActor(), task_spec.MaxActorConcurrency());
+  } else if (task_spec.IsActorTask()) {
+    RAY_CHECK(max_concurrency_ != 0);
+    RAY_CHECK((max_concurrency_ == 1 && !is_asyncio_) ||
+              (is_asyncio_ && fiber_state_ != nullptr) || pool_ != nullptr);
   }
 
   // Only assign resources for non-actor tasks. Actor tasks inherit the resources
@@ -577,17 +581,15 @@ void CoreWorkerDirectTaskReceiver::SetMaxActorConcurrency(bool is_asyncio,
   RAY_CHECK(fiber_state_ == nullptr);
   RAY_CHECK(pool_ == nullptr);
   RAY_CHECK(max_concurrency >= 1);
-  if (max_concurrency > 1) {
-    max_concurrency_ = max_concurrency;
-    is_asyncio_ = is_asyncio;
-    if (is_asyncio_) {
-      RAY_LOG(INFO) << "Creating new thread pool of size " << max_concurrency;
-      fiber_state_.reset(new FiberState(max_concurrency));
-    } else {
-      RAY_LOG(INFO) << "Setting actor as async with max_concurrency=" << max_concurrency
-                    << ", creating new fiber thread.";
-      pool_.reset(new BoundedExecutor(max_concurrency));
-    }
+  max_concurrency_ = max_concurrency;
+  is_asyncio_ = is_asyncio;
+  if (is_asyncio_) {
+    RAY_LOG(INFO) << "Setting actor as async with max_concurrency=" << max_concurrency_
+                  << ", creating new fiber thread.";
+    fiber_state_.reset(new FiberState(max_concurrency_));
+  } else if (max_concurrency_ > 1) {
+    RAY_LOG(INFO) << "Creating new thread pool of size " << max_concurrency_;
+    pool_.reset(new BoundedExecutor(max_concurrency_));
   }
 }
 
