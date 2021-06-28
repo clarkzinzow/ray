@@ -1,6 +1,7 @@
 import logging
 import inspect
 from functools import wraps
+import threading
 
 from ray import cloudpickle as pickle
 from ray._raylet import PythonFunctionDescriptor
@@ -26,6 +27,9 @@ DEFAULT_REMOTE_FUNCTION_MAX_CALLS = 0
 DEFAULT_REMOTE_FUNCTION_NUM_TASK_RETRIES = 3
 
 logger = logging.getLogger(__name__)
+
+
+thread_id_to_mode = {}
 
 
 class RemoteFunction:
@@ -198,7 +202,21 @@ class RemoteFunction:
                 override_environment_variables=None,
                 name=""):
         """Submit the remote function for execution."""
+        client_mode = False
         if client_mode_should_convert():
+            client_mode = True
+
+        thread_id = threading.get_ident()
+        if thread_id not in thread_id_to_mode:
+            thread_id_to_mode[thread_id] = client_mode
+            mode = "client" if client_mode else "normal"
+            print(f"Thread {thread_id} in {mode} mode.")
+        elif thread_id_to_mode[thread_id] != client_mode:
+            old_mode = "client" if thread_id_to_mode[thread_id]else "normal"
+            mode = "client" if client_mode else "normal"
+            print(f"Mode for {thread_id} changed from {old_mode} to {mode}.")
+
+        if client_mode:
             return client_mode_convert_function(
                 self,
                 args,
