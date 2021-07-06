@@ -1,5 +1,6 @@
 from typing import Iterable, List
 
+import ray
 from ray.experimental.data.impl.block import Block, BlockMetadata, ObjectRef, T
 
 
@@ -18,3 +19,7 @@ class BlockList(Iterable[ObjectRef[Block[T]]]):
 
     def __iter__(self):
         return iter(self._blocks)
+
+    def wait(self):
+        ray.wait(
+            self._blocks, num_returns=len(self._blocks), fetch_local=False)

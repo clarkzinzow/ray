@@ -629,6 +629,10 @@ class Dataset(Generic[T]):
             raise ValueError(
                 "Could not retrieve the input files of this dataset.")
 
+    def wait(self):
+        """Wait for the dataset to materialize."""
+        self._blocks.wait()
+
     def write_parquet(self,
                       path: str,
                       filesystem: Optional["pyarrow.fs.FileSystem"] = None

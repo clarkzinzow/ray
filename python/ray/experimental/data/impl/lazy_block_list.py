@@ -1,5 +1,6 @@
 from typing import Callable, List
 
+import ray
 from ray.experimental.data.impl.block import Block, BlockMetadata, ObjectRef, T
 from ray.experimental.data.impl.block_list import BlockList
 
@@ -42,3 +43,7 @@ class LazyBlockList(BlockList[T]):
             for c in self._calls[start:max(i + 1, start * 2)]:
                 self._blocks.append(c())
         return self._blocks[i]
+
+    def wait(self):
+        refs = list(iter(self))
+        ray.wait(refs, num_returns=len(refs), fetch_local=False)
