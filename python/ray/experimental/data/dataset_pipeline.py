@@ -37,13 +37,17 @@ class DatasetPipeline(Generic[T]):
             wait.remote(ds_fn) for ds_fn in dataset_producers], num_async)
 
     def _apply_op(self, fn_attr: str, *args, **kwargs) -> "DatasetPipeline":
-        num_async = kwargs.pop("num_async", self._num_async)
-        submitted_dses = []
+        num_async = kwargs.pop("num_async", None) or self._num_async
+        new_dses = []
         for ds in self._datasets:
-            submitted_dses.append(wait.remote(
-                getattr(ds, fn_attr), num_async, submitted_dses,
-                *args, **kwargs))
-        return DatasetPipeline(submitted_dses)
+            ds_fn = getattr(ds, fn_attr)
+            new_ds = (
+                ray.put(ds_fn(*args, **kwargs))
+                if len(new_dses) < self._num_async
+                else wait.remote(
+                    ds_fn, num_async, new_dses, *args, **kwargs))
+            new_dses.append(new_ds)
+        return DatasetPipeline(new_dses)
 
     def map(self, *args, num_async=None, **kwargs) -> "DatasetPipeline":
         return self._apply_op("map", *args, num_async=num_async, **kwargs)
