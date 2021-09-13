@@ -1,4 +1,5 @@
 import math
+import pdb
 from typing import TypeVar, List, Optional
 
 import numpy as np
@@ -17,6 +18,7 @@ def simple_shuffle(input_blocks: BlockList[T],
                    output_num_blocks: int,
                    *,
                    random_shuffle: bool = False,
+                   placement_group=None,
                    random_seed: Optional[int] = None) -> BlockList[T]:
     input_num_blocks = len(input_blocks)
 
@@ -30,6 +32,8 @@ def simple_shuffle(input_blocks: BlockList[T],
         shuffle_map.remote(block, i, output_num_blocks, random_shuffle,
                            random_seed) for i, block in enumerate(input_blocks)
     ]
+    del input_blocks
+    pdb.set_trace()
     if output_num_blocks == 1:
         # Handle the num_returns=1 edge case which doesn't return a list.
         shuffle_map_out = [[x] for x in shuffle_map_out]
@@ -44,10 +48,12 @@ def simple_shuffle(input_blocks: BlockList[T],
     reduce_bar = ProgressBar(
         "Shuffle Reduce", position=0, total=output_num_blocks)
     shuffle_reduce_out = [
-        shuffle_reduce.remote(
+        shuffle_reduce.options(placement_group=placement_group).remote(
             *[shuffle_map_out[i][j] for i in range(input_num_blocks)])
         for j in range(output_num_blocks)
     ]
+    del shuffle_map_out
+    pdb.set_trace()
     new_blocks, new_metadata = zip(*shuffle_reduce_out)
     reduce_bar.block_until_complete(list(new_blocks))
     new_metadata = ray.get(list(new_metadata))
