@@ -1,3 +1,4 @@
+import collections
 import os
 import random
 import requests
@@ -25,6 +26,10 @@ from ray.data.datasource.file_based_datasource import (
     _get_pyarrow_fses_needing_url_encoding)
 from ray.data.extensions.tensor_extension import (
     TensorArray, TensorDtype, ArrowTensorType, ArrowTensorArray)
+from ray.data.impl.split import (
+    _split_block_at_indices, _merge_blocks, _get_split_indices,
+    _get_split_sizes, _allocate_to_actors, _get_block_split_indices, Bin,
+    BinSet, BlockData, BlockSet, _allocate_blocks_to_actors)
 import ray.data.tests.util as util
 from ray.data.tests.conftest import *  # noqa
 
@@ -59,6 +64,248 @@ def test_avoid_placement_group_capture(shutdown_only, pipelined):
 
     pg = ray.util.placement_group([{"CPU": 1}])
     ray.get(run.options(placement_group=pg).remote())
+
+
+def test_split_block_at_indices():
+    block = list(range(10))
+    block_accessor = BlockAccessor.for_block(block)
+    meta = block_accessor.get_metadata(["foo", "bar"])
+    indices = [1, 4, 8]
+    splits = _split_block_at_indices(block, meta, indices)
+    assert len(splits) == 2 * (len(indices) - 1)
+    b1, m1 = splits[:2]
+    assert b1 == block[1:4]
+    assert m1.num_rows == 3
+    assert m1.input_files == ["foo", "bar"]
+    b2, m2 = splits[2:4]
+    assert b2 == block[4:8]
+    assert m2.num_rows == 4
+    assert m2.input_files == ["foo", "bar"]
+
+
+def test_merge_blocks():
+    block1 = list(range(10))
+    block2 = list(range(10, 20))
+    input_files = ["foo", "bar"]
+    merged_block, merged_meta = _merge_blocks(
+        block1, block2, input_files=input_files)
+    assert merged_block == block1 + block2
+    assert merged_meta.num_rows == 20
+    assert merged_meta.input_files == ["foo", "bar"]
+
+
+def test_get_split_indices():
+    actors = ["a", "b", "c"]
+    actor_slack = {
+        "a": 2,
+        "b": 5,
+        "c": 3}
+    block_size = 3
+    split_indices, out_actors, offset = _get_split_indices(
+        actors, actor_slack, block_size)
+    assert split_indices == [0, 2, 3]
+    assert out_actors == ["a", "b"]
+    assert offset == 3
+
+    block_size = 7
+    split_indices, out_actors, offset = _get_split_indices(
+        actors, actor_slack, block_size)
+    assert split_indices == [0, 2, 7]
+    assert out_actors == ["a", "b"]
+    assert offset == 7
+
+    block_size = 9
+    split_indices, out_actors, offset = _get_split_indices(
+        actors, actor_slack, block_size)
+    assert split_indices == [0, 2, 7, 9]
+    assert out_actors == ["a", "b", "c"]
+    assert offset == 9
+
+    block_size = 10
+    split_indices, out_actors, offset = _get_split_indices(
+        actors, actor_slack, block_size)
+    assert split_indices == [0, 2, 7, 10]
+    assert out_actors == ["a", "b", "c"]
+    assert offset == 10
+
+    returns = _get_split_indices(
+        [], {}, 1)
+    assert all(return_ is None for return_ in returns)
+
+
+@pytest.mark.parametrize(
+    "block_size,capacities,offset,expected_indices,expected_bins", [
+        (4, [3, 2, 1], 0, [0, 3, 4], [0, 1]),
+        (6, [3, 2, 1], 0, [0, 3, 5, 6], [0, 1, 2]),
+        (6, [1, 2, 3], 0, [0, 3, 5, 6], [2, 1, 0]),
+        (8, [3, 2, 1], 0, [0, 3, 5, 6], [0, 1, 2]),
+        (12, [4, 4, 4], 0, [0, 4, 8, 12], [0, 1, 2]),
+        (8, [1, 2, 3], 4, [4, 7, 8], [2, 1]),
+        (3, [], 0, None, None),
+    ])
+def test_get_block_split_indices(
+        block_size, capacities, offset, expected_indices, expected_bins):
+    bins = [
+        Bin(idx, cap)
+        for idx, cap in enumerate(capacities)]
+    bin_set = BinSet(bins)
+    split_indices, out_bins, out_offset = _get_block_split_indices(
+        bin_set, block_size, offset)
+    assert split_indices == expected_indices
+    if out_bins is not None:
+        assert out_bins == [bins[idx] for idx in expected_bins]
+    if out_offset is not None:
+        assert out_offset == min(block_size, sum(capacities) + offset)
+
+
+def test_get_split_sizes():
+    a = [1, 4, 8, 9]
+    sizes = _get_split_sizes(a)
+    assert sizes == [3, 4, 1]
+
+
+@pytest.mark.parametrize(
+    "block_sizes,capacities,bin_subsets,overallocate,expected_allocation", [
+        ([1, 2, 3], [3, 2, 1], [[0, 1, 2], [0, 1, 2], [0, 1, 2]], False,
+         [[2], [1], [0]]),
+    ])
+def test_allocate_blocks_to_actors(
+        block_sizes, capacities, bin_subsets, overallocate,
+        expected_allocation):
+    blocks = [
+        BlockData(idx, None, block_size)
+        for idx, block_size in enumerate(block_sizes)]
+    block_set = BlockSet(blocks)
+    bins = [
+        Bin(idx, cap)
+        for idx, cap in enumerate(capacities)]
+    bin_set = BinSet(bins)
+    bin_subsets = {
+        blocks[idx]: subset
+        for idx, subset in enumerate(bin_subsets)}
+    _allocate_blocks_to_actors(block_set, bin_set, bin_subsets, overallocate)
+    for bin_idx, allocation in enumerate(expected_allocation):
+        bin_ = bin_set.get_bin(bin_idx)
+        assert bin_.allocated_blocks == [
+            blocks[block_id] for block_id in allocation]
+        for block in bin_.allocated_blocks:
+            assert block.allocated
+
+
+def test_allocate_to_actors():
+    blocks = [1, 2, 3]
+    num_rows_by_block = {
+        1: 3,
+        2: 5,
+        3: 4}
+    actors_by_block = {
+        1: ["a", "b"],
+        2: ["c"],
+        3: ["b", "c"]}
+    target_num_rows_per_actor = 4
+    num_rows_allocated_per_actor = collections.defaultdict(int)
+    block_allocation_per_actor = collections.defaultdict(list)
+    unallocated = _allocate_to_actors(
+        blocks, num_rows_by_block, actors_by_block, target_num_rows_per_actor,
+        num_rows_allocated_per_actor, block_allocation_per_actor)
+    assert unallocated == [2]
+    assert block_allocation_per_actor["a"] == [1]
+    assert num_rows_allocated_per_actor["a"] == 3
+    assert block_allocation_per_actor["b"] == [3]
+    assert num_rows_allocated_per_actor["b"] == 4
+    assert block_allocation_per_actor["c"] == []
+    assert num_rows_allocated_per_actor["c"] == 0
+
+    # All packable on first actor.
+    num_rows_by_block = {
+        1: 1,
+        2: 2,
+        3: 1}
+    actors_by_block = {
+        1: ["a"],
+        2: ["a"],
+        3: ["a"]}
+    num_rows_allocated_per_actor = collections.defaultdict(int)
+    block_allocation_per_actor = collections.defaultdict(list)
+    unallocated = _allocate_to_actors(
+        blocks, num_rows_by_block, actors_by_block, target_num_rows_per_actor,
+        num_rows_allocated_per_actor, block_allocation_per_actor)
+    assert unallocated == []
+    assert block_allocation_per_actor["a"] == [2, 1, 3]
+    assert num_rows_allocated_per_actor["a"] == 4
+    assert block_allocation_per_actor["b"] == []
+    assert num_rows_allocated_per_actor["b"] == 0
+    assert block_allocation_per_actor["c"] == []
+    assert num_rows_allocated_per_actor["c"] == 0
+
+    # None packable on any actors.
+    num_rows_by_block = {
+        1: 2,
+        2: 2,
+        3: 2}
+    actors_by_block = {
+        1: ["a"],
+        2: ["b"],
+        3: ["c"]}
+    num_rows_allocated_per_actor = {
+        "a": target_num_rows_per_actor,
+        "b": target_num_rows_per_actor,
+        "c": target_num_rows_per_actor}
+    block_allocation_per_actor = {"a": [4], "b": [5], "c": [6]}
+    unallocated = _allocate_to_actors(
+        blocks, num_rows_by_block, actors_by_block, target_num_rows_per_actor,
+        num_rows_allocated_per_actor, block_allocation_per_actor)
+    assert unallocated == blocks
+    assert block_allocation_per_actor["a"] == [4]
+    assert num_rows_allocated_per_actor["a"] == target_num_rows_per_actor
+    assert block_allocation_per_actor["b"] == [5]
+    assert num_rows_allocated_per_actor["b"] == target_num_rows_per_actor
+    assert block_allocation_per_actor["c"] == [6]
+    assert num_rows_allocated_per_actor["c"] == target_num_rows_per_actor
+
+    # Perfectly packable.
+    num_rows_by_block = {
+        1: 2,
+        2: 1,
+        3: 1}
+    actors_by_block = {
+        1: ["a", "b", "c"],
+        2: ["a", "b", "c"],
+        3: ["a", "b", "c"]}
+    num_rows_allocated_per_actor = {"a": 3, "b": 3, "c": 2}
+    block_allocation_per_actor = {"a": [4], "b": [5], "c": [6]}
+    unallocated = _allocate_to_actors(
+        blocks, num_rows_by_block, actors_by_block, target_num_rows_per_actor,
+        num_rows_allocated_per_actor, block_allocation_per_actor)
+    assert unallocated == []
+    assert block_allocation_per_actor["a"] == [4, 2]
+    assert num_rows_allocated_per_actor["a"] == target_num_rows_per_actor
+    assert block_allocation_per_actor["b"] == [5, 3]
+    assert num_rows_allocated_per_actor["b"] == target_num_rows_per_actor
+    assert block_allocation_per_actor["c"] == [6, 1]
+    assert num_rows_allocated_per_actor["c"] == target_num_rows_per_actor
+
+    # Perfect packing isn't prevented by block ordering.
+    num_rows_by_block = {
+        1: 1,
+        2: 1,
+        3: 2}
+    actors_by_block = {
+        1: ["a", "b", "c"],
+        2: ["a", "b", "c"],
+        3: ["a", "b", "c"]}
+    num_rows_allocated_per_actor = {"a": 3, "b": 3, "c": 2}
+    block_allocation_per_actor = {"a": [4], "b": [5], "c": [6]}
+    unallocated = _allocate_to_actors(
+        blocks, num_rows_by_block, actors_by_block, target_num_rows_per_actor,
+        num_rows_allocated_per_actor, block_allocation_per_actor)
+    assert unallocated == []
+    assert block_allocation_per_actor["a"] == [4, 1]
+    assert num_rows_allocated_per_actor["a"] == target_num_rows_per_actor
+    assert block_allocation_per_actor["b"] == [5, 2]
+    assert num_rows_allocated_per_actor["b"] == target_num_rows_per_actor
+    assert block_allocation_per_actor["c"] == [6, 3]
+    assert num_rows_allocated_per_actor["c"] == target_num_rows_per_actor
 
 
 @pytest.mark.parametrize("pipelined", [False, True])
