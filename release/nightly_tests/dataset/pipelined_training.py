@@ -12,9 +12,9 @@ import torch
 import horovod.torch as hvd
 from horovod.ray import RayExecutor
 
-from ray_shuffling_data_loader.data_generation import DATA_SPEC
 from ray_shuffling_data_loader.embedding_model import MyModel, annotation, \
     huber_loss
+from data_generation import DATA_SPEC
 from ray.data.dataset_pipeline import DatasetPipeline
 
 # Training settings
