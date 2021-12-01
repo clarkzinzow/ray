@@ -190,6 +190,7 @@ class ArrowBlockAccessor(BlockAccessor):
 
     def iter_rows(self) -> Iterator[ArrowRow]:
         outer = self
+        print("iter_rows table size: ", outer._table.num_rows)
 
         class Iter:
             def __init__(self):
@@ -201,8 +202,11 @@ class ArrowBlockAccessor(BlockAccessor):
             def __next__(self):
                 self._cur += 1
                 if self._cur < outer._table.num_rows:
+                    if self._cur % 100000 == 0:
+                        print("nexting: ", self._cur, outer._table.num_rows)
                     row = ArrowRow(outer._table.slice(self._cur, 1))
                     return row
+                print("raising StopIteration in __next__")
                 raise StopIteration
 
         return Iter()
@@ -363,6 +367,7 @@ class ArrowBlockAccessor(BlockAccessor):
             aggregation.
             If key is None then the k column is omitted.
         """
+        print("combine key: ", key)
         # TODO(jjyao) This can be implemented natively in Arrow
         key_fn = (lambda r: r[key]) if key is not None else (lambda r: None)
         iter = self.iter_rows()
@@ -382,6 +387,7 @@ class ArrowBlockAccessor(BlockAccessor):
                         try:
                             next_row = next(iter)
                         except StopIteration:
+                            print("caught StopIteration in gen")
                             next_row = None
                             break
 
@@ -408,6 +414,7 @@ class ArrowBlockAccessor(BlockAccessor):
 
                 builder.add(row)
             except StopIteration:
+                print("caught StopIteration in while loop, breaking")
                 break
         return builder.build()
 
