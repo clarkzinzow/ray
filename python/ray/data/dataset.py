@@ -1218,13 +1218,30 @@ class Dataset(Generic[T]):
 
             If the dataset is empty, then a ``ValueError`` is raised.
         """
-        ret = self._aggregate_on(Mean, on)
-        if ret is None:
-            raise ValueError("Cannot compute mean on an empty dataset")
-        elif len(ret) == 1:
-            return ret[0]
-        else:
-            return ret
+        assert isinstance(on, str)
+
+        def _sum_and_count(block):
+            import pyarrow.compute as pac
+
+            col = block[on]
+            return pac.sum(col).as_py(), pac.count(col).as_py()
+
+        def _aggregate(*sums_and_counts):
+            sum = 0
+            count = 0
+            for sum_, count_ in sums_and_counts:
+                sum += sum_
+                count += count_
+            return sum / count
+
+        sum_and_count = cached_remote_fn(_sum_and_count)
+        aggregate = cached_remote_fn(_aggregate)
+
+        sums_and_counts = [
+            sum_and_count.remote(block)
+            for block in self._blocks.get_blocks()]
+        result = aggregate.remote(*sums_and_counts)
+        return ray.get(result)
 
     def std(self, on: Optional["AggregateOnTs"] = None, ddof: int = 1) -> U:
         """Compute standard deviation over entire dataset.
