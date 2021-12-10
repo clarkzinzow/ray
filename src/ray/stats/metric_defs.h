@@ -55,6 +55,10 @@ DECLARE_stats(pending_placement_group);
 DECLARE_stats(registered_placement_group);
 DECLARE_stats(infeasible_placement_group);
 
+/// Worker pool
+DECLARE_stats(num_workers_starting);
+DECLARE_stats(num_workers_running);
+
 /// The below items are legacy implementation of metrics.
 /// TODO(sang): Use DEFINE_stats instead.
 

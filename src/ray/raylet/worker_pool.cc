@@ -88,6 +88,8 @@ WorkerPool::WorkerPool(instrumented_io_context &io_service, const NodeID node_id
   // processes have started before a task runs on the node (as opposed to the
   // metric not existing at all).
   stats::NumWorkersStarted.Record(0);
+  stats::STATS_num_workers_starting.Record(0);
+  stats::STATS_num_workers_running.Record(0);
 #ifndef _WIN32
   // Ignore SIGCHLD signals. If we don't do this, then worker processes will
   // become zombies instead of dying gracefully.
@@ -418,6 +420,11 @@ Process WorkerPool::StartWorkerProcess(
   state.starting_worker_processes.emplace(
       worker_startup_token_counter_,
       StartingWorkerProcessInfo{workers_to_start, workers_to_start, worker_type, proc});
+  int num_workers_starting = 0;
+  for (const auto &entry : states_by_lang_) {
+    num_workers_starting += entry.second.starting_worker_processes.size();
+  }
+  stats::STATS_num_workers_starting.Record(num_workers_starting);
   update_worker_startup_token_counter();
   if (IsIOWorkerType(worker_type)) {
     auto &io_worker_state = GetIOWorkerStateFromWorkerType(worker_type, state);
@@ -456,6 +463,11 @@ void WorkerPool::MonitorStartingWorkerProcess(const Process &proc,
                                           status, &found, &used, &task_id);
       }
       state.starting_worker_processes.erase(it);
+      int num_workers_starting = 0;
+      for (const auto &entry : states_by_lang_) {
+        num_workers_starting += entry.second.starting_worker_processes.size();
+      }
+      stats::STATS_num_workers_starting.Record(num_workers_starting);
       if (IsIOWorkerType(worker_type)) {
         // Mark the I/O worker as failed.
         auto &io_worker_state = GetIOWorkerStateFromWorkerType(worker_type, state);
@@ -615,6 +627,11 @@ Status WorkerPool::RegisterWorker(const std::shared_ptr<WorkerInterface> &worker
   worker->SetAssignedPort(port);
 
   state.registered_workers.insert(worker);
+  int num_workers_running = 0;
+  for (const auto &entry : states_by_lang_) {
+    num_workers_running += entry.second.registered_workers.size();
+  }
+  stats::STATS_num_workers_running.Record(num_workers_running);
 
   // Send the reply immediately for worker registrations.
   send_reply_callback(Status::OK(), port);
@@ -632,6 +649,11 @@ void WorkerPool::OnWorkerStarted(const std::shared_ptr<WorkerInterface> &worker)
     it->second.num_starting_workers--;
     if (it->second.num_starting_workers == 0) {
       state.starting_worker_processes.erase(it);
+      int num_workers_starting = 0;
+      for (const auto &entry : states_by_lang_) {
+        num_workers_starting += entry.second.starting_worker_processes.size();
+      }
+      stats::STATS_num_workers_starting.Record(num_workers_starting);
       // We may have slots to start more workers now.
       TryStartIOWorkers(worker->GetLanguage());
     }
@@ -1189,6 +1211,11 @@ bool WorkerPool::DisconnectWorker(const std::shared_ptr<WorkerInterface> &worker
                                   rpc::WorkerExitType disconnect_type) {
   auto &state = GetStateForLanguage(worker->GetLanguage());
   RAY_CHECK(RemoveWorker(state.registered_workers, worker));
+  int num_workers_running = 0;
+  for (const auto &entry : states_by_lang_) {
+    num_workers_running += entry.second.registered_workers.size();
+  }
+  stats::STATS_num_workers_running.Record(num_workers_running);
   RAY_UNUSED(RemoveWorker(state.pending_disconnection_workers, worker));
 
   for (auto it = idle_of_all_languages_.begin(); it != idle_of_all_languages_.end();

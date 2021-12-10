@@ -75,6 +75,12 @@ DEFINE_stats(registered_placement_group, "Number of total registered placement g
 DEFINE_stats(infeasible_placement_group, "Number of total infeasible placement groups",
              (), (), ray::stats::GAUGE);
 
+/// Worker pool
+DEFINE_stats(num_workers_starting, "Number of workers starting in the worker pool", (),
+             (), ray::stats::GAUGE);
+DEFINE_stats(num_workers_running, "Number of workers currently in the worker pool", (),
+             (), ray::stats::GAUGE);
+
 }  // namespace stats
 
 }  // namespace ray
