@@ -1475,6 +1475,7 @@ cdef class CoreWorker:
                     int max_retries,
                     c_bool retry_exceptions,
                     scheduling_strategy,
+                    tolerations,
                     c_string debugger_breakpoint,
                     c_string serialized_runtime_env,
                     ):
@@ -1505,6 +1506,7 @@ cdef class CoreWorker:
                     serialized_runtime_env),
                 max_retries, retry_exceptions,
                 c_scheduling_strategy,
+                tolerations,
                 debugger_breakpoint)
 
             return VectorToObjectRefs(return_refs)
@@ -1527,6 +1529,7 @@ cdef class CoreWorker:
                      concurrency_groups_dict,
                      int32_t max_pending_calls,
                      scheduling_strategy,
+                     tolerations,
                      ):
         cdef:
             CRayFunction ray_function
@@ -1537,6 +1540,7 @@ cdef class CoreWorker:
             CActorID c_actor_id
             c_vector[CConcurrencyGroup] c_concurrency_groups
             CSchedulingStrategy c_scheduling_strategy
+            c_vector[c_string] c_tolerations = tolerations
 
         self.python_scheduling_strategy_to_c(
             scheduling_strategy, &c_scheduling_strategy)
@@ -1561,6 +1565,7 @@ cdef class CoreWorker:
                         ray_namespace,
                         is_asyncio,
                         c_scheduling_strategy,
+                        c_tolerations,
                         serialized_runtime_env,
                         c_concurrency_groups,
                         # execute out of order for
