@@ -1476,6 +1476,7 @@ cdef class CoreWorker:
                     c_bool retry_exceptions,
                     scheduling_strategy,
                     tolerations,
+                    colocate_with,
                     c_string debugger_breakpoint,
                     c_string serialized_runtime_env,
                     ):
@@ -1485,6 +1486,8 @@ cdef class CoreWorker:
             c_vector[unique_ptr[CTaskArg]] args_vector
             c_vector[CObjectReference] return_refs
             CSchedulingStrategy c_scheduling_strategy
+            unique_ptr[CTaskArgByReference] c_colocate_with_object_ref
+            unique_ptr[CActorHandle] c_colocate_with_actor_handle
 
         self.python_scheduling_strategy_to_c(
             scheduling_strategy, &c_scheduling_strategy)
@@ -1507,6 +1510,7 @@ cdef class CoreWorker:
                 max_retries, retry_exceptions,
                 c_scheduling_strategy,
                 tolerations,
+                colocate_with,
                 debugger_breakpoint)
 
             return VectorToObjectRefs(return_refs)
@@ -1530,6 +1534,7 @@ cdef class CoreWorker:
                      int32_t max_pending_calls,
                      scheduling_strategy,
                      tolerations,
+                     colocate_with,
                      ):
         cdef:
             CRayFunction ray_function

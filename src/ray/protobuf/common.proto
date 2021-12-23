@@ -258,6 +258,12 @@ message TaskSpec {
   SchedulingStrategy scheduling_strategy = 27;
   // Taints that this task tolerates.
   repeated string tolerations = 28;
+  // Ray object reference or actor handle that this task must be colocated
+  // with.
+  oneof colocated_with {
+    ObjectReference object_ref = 29;
+    bytes serialized_actor_handle = 30;
+  }
 }
 
 message Bundle {

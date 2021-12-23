@@ -77,13 +77,16 @@ class RemoteFunction:
         _scheduling_strategy: Strategy about how to schedule
             this remote function.
         _tolerations: The taints that this task or actor tolerates.
+        _colocate_with: The Ray object or Ray actor that this task or actor
+            must be colocated with.
     """
 
     def __init__(self, language, function, function_descriptor, num_cpus,
                  num_gpus, memory, object_store_memory, resources,
                  accelerator_type, num_returns, max_calls, max_retries,
                  retry_exceptions, runtime_env, placement_group,
-                 scheduling_strategy: SchedulingStrategyT, tolerations):
+                 scheduling_strategy: SchedulingStrategyT, tolerations,
+                 colocate_with):
         if inspect.iscoroutinefunction(function):
             raise ValueError("'async def' should not be used for remote "
                              "tasks. You can wrap the async function with "
@@ -131,6 +134,7 @@ class RemoteFunction:
             self._function)
         self._scheduling_strategy = scheduling_strategy
         self._tolerations = tolerations
+        self._colocate_with = colocate_with
 
         self._last_export_session_and_job = None
         self._uuid = uuid.uuid4()
@@ -165,7 +169,8 @@ class RemoteFunction:
                 runtime_env=None,
                 name="",
                 scheduling_strategy: SchedulingStrategyT = None,
-                tolerations=None):
+                tolerations=None,
+                colocate_with=None):
         """Configures and overrides the task invocation parameters.
 
         The arguments are the same as those that can be passed to
@@ -220,7 +225,8 @@ class RemoteFunction:
                     runtime_env=new_runtime_env,
                     name=name,
                     scheduling_strategy=scheduling_strategy,
-                    tolerations=tolerations)
+                    tolerations=tolerations,
+                    colocate_with=colocate_with)
 
         return FuncWrapper()
 
@@ -243,7 +249,8 @@ class RemoteFunction:
                 runtime_env=None,
                 name="",
                 scheduling_strategy: SchedulingStrategyT = None,
-                tolerations=None):
+                tolerations=None,
+                colocate_with=None):
         """Submit the remote function for execution."""
 
         if client_mode_should_convert(auto_init=True):
@@ -267,7 +274,8 @@ class RemoteFunction:
                 runtime_env=runtime_env,
                 name=name,
                 scheduling_strategy=scheduling_strategy,
-                tolerations=tolerations)
+                tolerations=tolerations,
+                colocate_with=colocate_with)
 
         worker = ray.worker.global_worker
         worker.check_connected()
@@ -314,6 +322,8 @@ class RemoteFunction:
             scheduling_strategy = self._scheduling_strategy
         if tolerations is None:
             tolerations = self._tolerations
+        if colocate_with is None:
+            colocate_with = self._colocate_with
 
         resources = ray._private.utils.resources_from_resource_arguments(
             self._num_cpus, self._num_gpus, self._memory,
@@ -379,8 +389,8 @@ class RemoteFunction:
             object_refs = worker.core_worker.submit_task(
                 self._language, self._function_descriptor, list_args, name,
                 num_returns, resources, max_retries, retry_exceptions,
-                scheduling_strategy, tolerations, worker.debugger_breakpoint,
-                runtime_env or "{}")
+                scheduling_strategy, tolerations, colocate_with,
+                worker.debugger_breakpoint, runtime_env or "{}")
             # Reset worker's debug context from the last "remote" command
             # (which applies only to this .remote call).
             worker.debugger_breakpoint = b""
