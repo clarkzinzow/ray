@@ -2,6 +2,8 @@ import logging
 from typing import Union
 from types import ModuleType
 
+import ray
+
 logger = logging.getLogger(__name__)
 
 MIN_PYARROW_VERSION = (6, 0, 1)
@@ -51,3 +53,7 @@ def _check_pyarrow_version():
             )
         else:
             _VERSION_VALIDATED = True
+
+
+def _get_num_cores_available():
+    return ray.cluster_resources().get("CPU", 0)

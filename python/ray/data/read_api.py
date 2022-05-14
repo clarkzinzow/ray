@@ -61,7 +61,7 @@ from ray.data.impl.lazy_block_list import LazyBlockList
 from ray.data.impl.plan import ExecutionPlan
 from ray.data.impl.remote_fn import cached_remote_fn
 from ray.data.impl.stats import DatasetStats
-from ray.data.impl.util import _lazy_import_pyarrow_dataset
+from ray.data.impl.util import _lazy_import_pyarrow_dataset, _get_num_cores_available
 
 T = TypeVar("T")
 
@@ -69,7 +69,7 @@ logger = logging.getLogger(__name__)
 
 
 @PublicAPI
-def from_items(items: List[Any], *, parallelism: int = 200) -> Dataset[Any]:
+def from_items(items: List[Any], *, parallelism: Optional[int] = None) -> Dataset[Any]:
     """Create a dataset from a list of local Python objects.
 
     Examples:
@@ -78,12 +78,16 @@ def from_items(items: List[Any], *, parallelism: int = 200) -> Dataset[Any]:
 
     Args:
         items: List of local Python objects.
-        parallelism: The amount of parallelism to use for the dataset.
-            Parallelism may be limited by the number of items.
+        parallelism: The amount of parallelism to use for the dataset. If not given,
+            the number of cores in the cluster will be used. Parallelism may be further
+            limited by the number of items.
 
     Returns:
         Dataset holding the items.
     """
+    if parallelism is None:
+        parallelism = _get_default_read_parallelism()
+
     block_size = max(1, len(items) // parallelism)
 
     blocks: List[ObjectRef[Block]] = []
@@ -114,7 +118,7 @@ def from_items(items: List[Any], *, parallelism: int = 200) -> Dataset[Any]:
 
 
 @PublicAPI
-def range(n: int, *, parallelism: int = 200) -> Dataset[int]:
+def range(n: int, *, parallelism: Optional[int] = None) -> Dataset[int]:
     """Create a dataset from a range of integers [0..n).
 
     Examples:
@@ -135,7 +139,7 @@ def range(n: int, *, parallelism: int = 200) -> Dataset[int]:
 
 
 @PublicAPI
-def range_arrow(n: int, *, parallelism: int = 200) -> Dataset[ArrowRow]:
+def range_arrow(n: int, *, parallelism: Optional[int] = None) -> Dataset[ArrowRow]:
     """Create an Arrow dataset from a range of integers [0..n).
 
     Examples:
@@ -148,8 +152,9 @@ def range_arrow(n: int, *, parallelism: int = 200) -> Dataset[ArrowRow]:
 
     Args:
         n: The upper bound of the range of integer records.
-        parallelism: The amount of parallelism to use for the dataset.
-            Parallelism may be limited by the number of items.
+        parallelism: The amount of parallelism to use for the dataset. If not given,
+            the number of cores in the cluster will be used. Parallelism may be further
+            limited by the number of items.
 
     Returns:
         Dataset holding the integers as Arrow records.
@@ -161,7 +166,7 @@ def range_arrow(n: int, *, parallelism: int = 200) -> Dataset[ArrowRow]:
 
 @PublicAPI
 def range_tensor(
-    n: int, *, shape: Tuple = (1,), parallelism: int = 200
+    n: int, *, shape: Tuple = (1,), parallelism: Optional[int] = None
 ) -> Dataset[ArrowRow]:
     """Create a Tensor dataset from a range of integers [0..n).
 
@@ -177,8 +182,9 @@ def range_tensor(
     Args:
         n: The upper bound of the range of integer records.
         shape: The shape of each record.
-        parallelism: The amount of parallelism to use for the dataset.
-            Parallelism may be limited by the number of items.
+        parallelism: The amount of parallelism to use for the dataset. If not given,
+            the number of cores in the cluster will be used. Parallelism may be further
+            limited by the number of items.
 
     Returns:
         Dataset holding the integers as Arrow tensor records.
@@ -196,7 +202,7 @@ def range_tensor(
 def read_datasource(
     datasource: Datasource[T],
     *,
-    parallelism: int = 200,
+    parallelism: Optional[int] = None,
     ray_remote_args: Dict[str, Any] = None,
     **read_args,
 ) -> Dataset[T]:
@@ -204,14 +210,18 @@ def read_datasource(
 
     Args:
         datasource: The datasource to read data from.
-        parallelism: The requested parallelism of the read. Parallelism may be
-            limited by the available partitioning of the datasource.
+        parallelism: The requested parallelism for the read. If not given,
+            the number of cores in the cluster will be used. Parallelism may be further
+            limited by the partitioning of the datasource.
         read_args: Additional kwargs to pass to the datasource impl.
         ray_remote_args: kwargs passed to ray.remote in the read tasks.
 
     Returns:
         Dataset holding the data read from the datasource.
     """
+    if parallelism is None:
+        parallelism = _get_default_read_parallelism()
+
     # TODO(ekl) remove this feature flag.
     force_local = "RAY_DATASET_FORCE_LOCAL_METADATA" in os.environ
     pa_ds = _lazy_import_pyarrow_dataset()
@@ -274,7 +284,7 @@ def read_parquet(
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
     columns: Optional[List[str]] = None,
-    parallelism: int = 200,
+    parallelism: Optional[int] = None,
     ray_remote_args: Dict[str, Any] = None,
     tensor_column_schema: Optional[Dict[str, Tuple[np.dtype, Tuple[int, ...]]]] = None,
     meta_provider: ParquetMetadataProvider = DefaultParquetMetadataProvider(),
@@ -294,8 +304,9 @@ def read_parquet(
         paths: A single file path or a list of file paths (or directories).
         filesystem: The filesystem implementation to read from.
         columns: A list of column names to read.
-        parallelism: The requested parallelism of the read. Parallelism may be
-            limited by the number of files of the dataset.
+        parallelism: The requested parallelism for the read. If not given, the number of
+            cores in the cluster will be used. Parallelism may be further limited by the
+            number of files in the dataset.
         ray_remote_args: kwargs passed to ray.remote in the read tasks.
         tensor_column_schema: A dict of column name --> tensor dtype and shape
             mappings for converting a Parquet column containing serialized
@@ -332,7 +343,7 @@ def read_parquet_bulk(
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
     columns: Optional[List[str]] = None,
-    parallelism: int = 200,
+    parallelism: Optional[int] = None,
     ray_remote_args: Dict[str, Any] = None,
     arrow_open_file_args: Optional[Dict[str, Any]] = None,
     tensor_column_schema: Optional[Dict[str, Tuple[np.dtype, Tuple[int, ...]]]] = None,
@@ -378,8 +389,9 @@ def read_parquet_bulk(
             that supports directory expansion (e.g. DefaultFileMetadataProvider).
         filesystem: The filesystem implementation to read from.
         columns: A list of column names to read.
-        parallelism: The requested parallelism of the read. Parallelism may be
-            limited by the number of files of the dataset.
+        parallelism: The requested parallelism for the read. If not given, the number of
+            cores in the cluster will be used. Parallelism may be further limited by the
+            number of files in the dataset.
         ray_remote_args: kwargs passed to ray.remote in the read tasks.
         arrow_open_file_args: kwargs passed to
             pyarrow.fs.FileSystem.open_input_file
@@ -423,7 +435,7 @@ def read_json(
     paths: Union[str, List[str]],
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
-    parallelism: int = 200,
+    parallelism: Optional[int] = None,
     ray_remote_args: Dict[str, Any] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     meta_provider: BaseFileMetadataProvider = DefaultFileMetadataProvider(),
@@ -448,8 +460,9 @@ def read_json(
         paths: A single file/directory path or a list of file/directory paths.
             A list of paths can contain both files and directories.
         filesystem: The filesystem implementation to read from.
-        parallelism: The requested parallelism of the read. Parallelism may be
-            limited by the number of files of the dataset.
+        parallelism: The requested parallelism for the read. If not given, the number of
+            cores in the cluster will be used. Parallelism may be further limited by the
+            number of files in the dataset.
         ray_remote_args: kwargs passed to ray.remote in the read tasks.
         arrow_open_stream_args: kwargs passed to
             pyarrow.fs.FileSystem.open_input_stream
@@ -480,7 +493,7 @@ def read_csv(
     paths: Union[str, List[str]],
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
-    parallelism: int = 200,
+    parallelism: Optional[int] = None,
     ray_remote_args: Dict[str, Any] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     meta_provider: BaseFileMetadataProvider = DefaultFileMetadataProvider(),
@@ -505,8 +518,9 @@ def read_csv(
         paths: A single file/directory path or a list of file/directory paths.
             A list of paths can contain both files and directories.
         filesystem: The filesystem implementation to read from.
-        parallelism: The requested parallelism of the read. Parallelism may be
-            limited by the number of files of the dataset.
+        parallelism: The requested parallelism for the read. If not given, the number of
+            cores in the cluster will be used. Parallelism may be further limited by the
+            number of files in the dataset.
         ray_remote_args: kwargs passed to ray.remote in the read tasks.
         arrow_open_stream_args: kwargs passed to
             pyarrow.fs.FileSystem.open_input_stream
@@ -540,7 +554,7 @@ def read_text(
     errors: str = "ignore",
     drop_empty_lines: bool = True,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
-    parallelism: int = 200,
+    parallelism: Optional[int] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     meta_provider: BaseFileMetadataProvider = DefaultFileMetadataProvider(),
     partition_filter: PathPartitionFilter = None,
@@ -561,8 +575,9 @@ def read_text(
         errors: What to do with errors on decoding. Specify either "strict",
             "ignore", or "replace". Defaults to "ignore".
         filesystem: The filesystem implementation to read from.
-        parallelism: The requested parallelism of the read. Parallelism may be
-            limited by the number of files of the dataset.
+        parallelism: The requested parallelism for the read. If not given, the number of
+            cores in the cluster will be used. Parallelism may be further limited by the
+            number of files in the dataset.
         arrow_open_stream_args: kwargs passed to
             pyarrow.fs.FileSystem.open_input_stream
         meta_provider: File metadata provider. Custom metadata providers may
@@ -595,7 +610,7 @@ def read_numpy(
     paths: Union[str, List[str]],
     *,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
-    parallelism: int = 200,
+    parallelism: Optional[int] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     meta_provider: BaseFileMetadataProvider = DefaultFileMetadataProvider(),
     partition_filter: PathPartitionFilter = None,
@@ -619,8 +634,9 @@ def read_numpy(
         paths: A single file/directory path or a list of file/directory paths.
             A list of paths can contain both files and directories.
         filesystem: The filesystem implementation to read from.
-        parallelism: The requested parallelism of the read. Parallelism may be
-            limited by the number of files of the dataset.
+        parallelism: The requested parallelism for the read. If not given, the number of
+            cores in the cluster will be used. Parallelism may be further limited by the
+            number of files in the dataset.
         arrow_open_stream_args: kwargs passed to
             pyarrow.fs.FileSystem.open_input_stream
         numpy_load_args: Other options to pass to np.load.
@@ -649,7 +665,7 @@ def read_binary_files(
     *,
     include_paths: bool = False,
     filesystem: Optional["pyarrow.fs.FileSystem"] = None,
-    parallelism: int = 200,
+    parallelism: Optional[int] = None,
     ray_remote_args: Dict[str, Any] = None,
     arrow_open_stream_args: Optional[Dict[str, Any]] = None,
     meta_provider: BaseFileMetadataProvider = DefaultFileMetadataProvider(),
@@ -673,8 +689,9 @@ def read_binary_files(
             tuple of the file path and the file contents.
         filesystem: The filesystem implementation to read from.
         ray_remote_args: kwargs passed to ray.remote in the read tasks.
-        parallelism: The requested parallelism of the read. Parallelism may be
-            limited by the number of files of the dataset.
+        parallelism: The requested parallelism for the read. If not given, the number of
+            cores in the cluster will be used. Parallelism may be further limited by the
+            number of files in the dataset.
         arrow_open_stream_args: kwargs passed to
             pyarrow.fs.FileSystem.open_input_stream
         meta_provider: File metadata provider. Custom metadata providers may
@@ -949,11 +966,10 @@ def from_spark(
     """Create a dataset from a Spark dataframe.
 
     Args:
-        spark: A SparkSession, which must be created by RayDP (Spark-on-Ray).
         df: A Spark dataframe, which must be created by RayDP (Spark-on-Ray).
-            parallelism: The amount of parallelism to use for the dataset.
-            If not provided, it will be equal to the number of partitions of
-            the original Spark dataframe.
+        parallelism: The amount of parallelism to use for the dataset.
+        If not provided, it will be equal to the number of partitions of
+        the original Spark dataframe.
 
     Returns:
         Dataset holding Arrow records read from the dataframe.
@@ -1072,3 +1088,9 @@ def _resolve_parquet_args(
 
         arrow_parquet_args["_block_udf"] = _block_udf
     return arrow_parquet_args
+
+
+def _get_default_read_parallelism():
+    """Get the default read parallelism."""
+    num_cores = _get_num_cores_available()
+    return max(num_cores, 1)
