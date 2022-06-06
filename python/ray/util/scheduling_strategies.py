@@ -22,6 +22,16 @@ class PlacementGroupSchedulingStrategy:
         placement_group_capture_child_tasks: Whether or not children tasks
             of this actor should implicitly use the same placement group
             as its parent. It is False by default.
+        soft: Whether the placement group request is soft (optional). If True, Ray will
+            try to schedule the task/actor in the placement group, but allow it to be
+            scheduled outside of the placement group if that's infeasible. If False, Ray
+            will try to schedule the task/actor in the placement group, and queue
+            (block) the task/actor if that's infeasible, until scheduling within the
+            placement group becomes feasible. Default is False.
+        fallback_scheduling_strategy: The fallback scheduling strategy to be used if
+            scheduling within the placement group is infeasible. This is only valid/used
+            if soft=True; otherwise, we queue (block) the task/actor until scheduling
+            within the placement group becomes feasible.
     """
 
     def __init__(
@@ -29,15 +39,27 @@ class PlacementGroupSchedulingStrategy:
         placement_group: PlacementGroup,
         placement_group_bundle_index: int = -1,
         placement_group_capture_child_tasks: Optional[bool] = None,
+        soft: bool = False,
+        fallback_scheduling_strategy: Optional["SchedulingStrategyT"] = None,
     ):
         if placement_group is None:
             raise ValueError(
                 "placement_group needs to be an instance of PlacementGroup"
             )
 
+        if fallback_scheduling_strategy is not None:
+            if not soft:
+                raise ValueError(
+                    "fallback_scheduling_strategy can only be used if soft=True."
+                )
+            else:
+                fallback_scheduling_strategy = "DEFAULT"
+
         self.placement_group = placement_group
         self.placement_group_bundle_index = placement_group_bundle_index
         self.placement_group_capture_child_tasks = placement_group_capture_child_tasks
+        self.soft = soft
+        self.fallback_scheduling_strategy = fallback_scheduling_strategy
 
 
 @PublicAPI(stability="beta")

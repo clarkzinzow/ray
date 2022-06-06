@@ -1495,6 +1495,12 @@ cdef class CoreWorker:
                 .set_placement_group_capture_child_tasks(
                     python_scheduling_strategy
                     .placement_group_capture_child_tasks)
+            c_placement_group_scheduling_strategy[0] \
+                .set_soft(python_scheduling_strategy.soft)
+            c_placement_group_scheduling_strategy[0] \
+                .set_fallback_scheduling_strategy(
+                    python_scheduling_strategy_to_c(
+                        python_scheduling_strategy.fallback_scheduling_strategy))
         elif isinstance(python_scheduling_strategy,
                         NodeAffinitySchedulingStrategy):
             c_node_affinity_scheduling_strategy = \

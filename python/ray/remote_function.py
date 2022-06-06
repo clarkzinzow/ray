@@ -261,7 +261,10 @@ class RemoteFunction:
                 placement_group_capture_child_tasks = (
                     scheduling_strategy.placement_group_capture_child_tasks
                 )
-
+                placement_group_soft = scheduling_strategy.soft
+                placement_group_fallback_scheduling_strategy = (
+                    scheduling_strategy.fallback_scheduling_strategy
+                )
             if placement_group_capture_child_tasks is None:
                 placement_group_capture_child_tasks = (
                     worker.should_capture_child_tasks_in_placement_group
@@ -279,6 +282,8 @@ class RemoteFunction:
                     placement_group,
                     placement_group_bundle_index,
                     placement_group_capture_child_tasks,
+                    placement_group_soft,
+                    placement_group_fallback_scheduling_strategy,
                 )
             else:
                 scheduling_strategy = "DEFAULT"

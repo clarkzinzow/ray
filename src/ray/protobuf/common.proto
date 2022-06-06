@@ -61,6 +61,18 @@ message PlacementGroupSchedulingStrategy {
   int64 placement_group_bundle_index = 2;
   // Whether or not this task should capture parent's placement group automatically.
   bool placement_group_capture_child_tasks = 3;
+  // Whether the placement group request is soft (optional). If True, Ray will try to
+  // schedule the task/actor in the placement group, but allow it to be scheduled
+  // outside of the placement group if the placement group is unavailable. If False, Ray
+  // will try to schedule the task/actor in the placement group, and queue (block) the
+  // task/actor if that's unavailable, until scheduling within the placement group becomes
+  // possible.
+  bool soft = 4;
+  // The fallback scheduling strategy to be used if scheduling within the placement
+  // group is not available. This is only valid/used if soft=True; otherwise, we queue
+  // (block) the task/actor until scheduling within the placement group becomes
+  // available.
+  SchedulingStrategy fallback_scheduling_strategy = 5;
 }
 
 message DefaultSchedulingStrategy {}

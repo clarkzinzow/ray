@@ -97,6 +97,9 @@ struct hash<ray::rpc::SchedulingStrategy> {
                   .placement_group_bundle_index();
       hash ^= scheduling_strategy.placement_group_scheduling_strategy()
                   .placement_group_capture_child_tasks();
+      hash ^= scheduling_strategy.placement_group_scheduling_strategy().soft();
+      hash ^= scheduling_strategy.placement_group_scheduling_strategy()
+                  .fallback_scheduling_strategy();
     }
     return hash;
   }
