@@ -4009,6 +4009,47 @@ def test_random_shuffle(shutdown_only, pipelined, use_push_based_shuffle):
     assert r1.take() == ds.take()
 
 
+@pytest.mark.parametrize("pipelined", [False, True])
+def test_random_shuffle_seed(shutdown_only, pipelined):
+    def range(n, parallelism=200):
+        ds = ray.data.range(n, parallelism=parallelism)
+        if pipelined:
+            pipe = ds.repeat(2)
+            pipe.random_shuffle = pipe.random_shuffle_each_window
+            return pipe
+        else:
+            return ds
+
+    r1 = range(100).random_shuffle(seed=1).take_all()
+    r2 = range(100).random_shuffle(seed=1).take_all()
+    assert r1 == r2, (r1, r2)
+
+    r1 = range(100).random_shuffle(seed=1).take_all()
+    r2 = range(100).random_shuffle(seed=2).take_all()
+    assert r1 != r2, (r1, r2)
+
+
+def test_random_shuffle_seed_epoch_pipeline(shutdown_only):
+    dses = list(
+        ray.data.range(100).repeat(2).random_shuffle_each_window(seed=0).iter_datasets()
+    )
+    # Confirm that the epoch affects the seed.
+    assert dses[0].take_all() != dses[1].take_all()
+    ds = ray.data.range(100, parallelism=1)
+
+    dses = list(
+        ds.union(ds)
+        .repeat(2)
+        .rewindow(blocks_per_window=2)
+        .random_shuffle_each_window(seed=0)
+        .iter_datasets()
+    )
+    # Confirm that the seed varies with the epoch, not the window.
+    assert dses[0].take_all() == dses[1].take_all()
+    assert dses[2].take_all() == dses[3].take_all()
+    assert dses[0].take_all() != dses[2].take_all()
+
+
 def test_random_shuffle_check_random(shutdown_only):
     # Rows from the same input should not be contiguous in the final output.
     num_files = 10

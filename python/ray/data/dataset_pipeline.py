@@ -49,7 +49,6 @@ _PER_DATASET_OPS = [
 # Operations that apply to each dataset holistically in the pipeline.
 _HOLISTIC_PER_DATASET_OPS = [
     "repartition",
-    "random_shuffle",
     "sort",
     "randomize_block_order",
 ]
@@ -207,6 +206,50 @@ class DatasetPipeline(Generic[T]):
             self._stats.iter_ds_wait_s.add(time.perf_counter() - ds_wait_start)
             yield from ds._plan.execute().iter_blocks()
             ds_wait_start = time.perf_counter()
+
+    def random_shuffle_each_window(
+        self,
+        *,
+        seed: Optional[int] = None,
+        num_blocks: Optional[int] = None,
+    ) -> "DatasetPipeline[U]":
+        """Randomly shuffle the elements of each dataset in this pipeline.
+
+        Examples:
+            >>> import ray
+            >>> pipe = ray.data.range(100).repeat() # doctest: +SKIP
+            >>> # Shuffle the datasets in this pipeline randomly.
+            >>> pipe.random_shuffle_each_window() # doctest: +SKIP
+            >>> # Shuffle this dataset pipeline with a fixed random seed.
+            >>> pipe.random_shuffle_each_window(seed=12345) # doctest: +SKIP
+
+        Time complexity: O(dataset size / parallelism)
+
+        Args:
+            seed: Fix the random seed to use, otherwise one will be chosen
+                based on system randomness. Each dataset in the pipeline will be
+                shuffled with the seed ``seed + epoch``.
+            num_blocks: The number of output blocks after the shuffle, or None
+                to retain the number of blocks.
+
+        Returns:
+            A dataset pipeline containing shuffled datasets.
+        """
+
+        def random_shuffle(ds: Dataset) -> Dataset:
+            print(seed, ds._get_epoch())
+            return ds.random_shuffle(
+                seed=None if seed is None else seed + ds._get_epoch(),
+                num_blocks=num_blocks,
+            )
+
+        return self.foreach_window(random_shuffle)
+        # return self.foreach_window(
+        #     lambda ds: ds.random_shuffle(
+        #         seed=None if seed is None else seed + ds._get_epoch(),
+        #         num_blocks=num_blocks,
+        #     )
+        # )
 
     def split(
         self, n: int, *, equal: bool = False, locality_hints: List[Any] = None
