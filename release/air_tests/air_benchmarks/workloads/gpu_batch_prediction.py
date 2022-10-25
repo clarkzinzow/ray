@@ -37,7 +37,7 @@ class DebugPredictor(TorchPredictor):
     def call_model(self, tensor):
         import torch
 
-        out = super().call_model(tensor)
+        print("reached call_model: ", len(tensor))
         print(
             "cuda reserved memory: ",
             _human_readable_bytes(torch.cuda.memory_reserved()),
@@ -46,6 +46,8 @@ class DebugPredictor(TorchPredictor):
             "cuda allocated memory: ",
             _human_readable_bytes(torch.cuda.memory_allocated()),
         )
+
+        out = super().call_model(tensor)
         return out
 
 
@@ -80,7 +82,7 @@ def main(data_size_gb: int, smoke_test: bool = False):
         dataset,
         num_gpus_per_worker=int(not smoke_test),
         feature_columns=["image"],
-        batch_size=None,
+        batch_size=1024,
     )
     total_time_s = round(time.time() - start, 2)
 
