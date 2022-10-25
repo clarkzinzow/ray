@@ -68,6 +68,7 @@ def main(data_size_gb: int, smoke_test: bool = False):
 
     start = time.time()
     dataset = ray.data.read_images(data_url, size=(256, 256))
+    print("Number of images: ", dataset.count())
 
     model = resnet18(pretrained=True)
 
@@ -79,7 +80,7 @@ def main(data_size_gb: int, smoke_test: bool = False):
         dataset,
         num_gpus_per_worker=int(not smoke_test),
         feature_columns=["image"],
-        batch_size=1024,
+        batch_size=None,
     )
     total_time_s = round(time.time() - start, 2)
 

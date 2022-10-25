@@ -308,7 +308,7 @@
 
   run:
     timeout: 3600
-    script: python workloads/gpu_batch_prediction.py --data-size-gb 20
+    script: python workloads/gpu_batch_prediction.py --data-size-gb 1
 
     type: sdk_command
     file_manager: job
