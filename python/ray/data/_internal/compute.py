@@ -1,7 +1,9 @@
 import collections
 import logging
 import math
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple, TypeVar, Union
+from typing import (
+    Any, Set, Callable, Dict, Iterable, List, Optional, Tuple, TypeVar, Union
+)
 
 import ray
 from ray.data._internal.block_list import BlockList
@@ -496,6 +498,535 @@ class ActorPoolStrategy(ComputeStrategy):
                 logger.exception(f"Error killing workers: {err}")
             finally:
                 raise e
+
+
+# Autoscaling actor pool abstractions:
+#  - autoscaling config: configuration for policy
+#  - autoscaling policy: how many workers to prestart, whether we should scasle up when
+#  no workers are available after wait timeout, whether we should scale down after
+#  the work queue decreases in size.
+#  - worker pool manager: managing pool of workers, i.e. adding a worker, leasing a worker for
+#  execution, returning a worker to the pool, killing a worker
+#  - worker: handles worker creation and destruction, work submission
+#  - worker pool executor: runs autoscaling + work submission loop
+
+
+class ActorPoolAutoscalingConfig:
+    min_workers: int
+    max_workers: int
+    ready_to_total_workers_ratio: int
+    wait_timeout: float
+
+
+class ActorPoolAutoscalingPolicy:
+    def __init__(self, config: ActorPoolAutoscalingConfig):
+        self.config = config
+
+    def num_workers_to_prestart(self):
+        pass
+
+    def should_scale_up(
+        self, num_pending_workers, num_running_workers, work_queue_size
+    ):
+        pass
+
+    def should_scale_down_worker(self, worker, work_queue_size):
+        return work_queue_size == 0 and worker.tasks_in_flight == 0
+
+    def should_scale_down_pending_workers(self, work_queue_size):
+        return work_queue_size == 0
+
+    def scale_down_if_needed(self, actor_pool, work_queue_size, worker):
+        if work_queue_size == 0:
+            if worker.tasks_in_flight == 0:
+                actor_pool.kill_worker(worker)
+            actor_pool.kill_pending_workers()
+
+    def get_wait_timeout(self):
+        return self.config.wait_timeout
+
+
+class TaskResult:
+    @abstractmethod
+    def get_result_future(self):
+        raise NotImplementedError()
+
+
+@dataclass
+class TaskResult:
+    result_future: ray.ObjectRef
+    metadata: BlockMetadata
+    order_index: int
+
+
+class Worker(ABC):
+    @abstractmethod
+    def submit(self, work: Work) -> Result:
+        pass
+
+    @abstractmethod
+    def task_done(self):
+        pass
+
+    @abstractmethod
+    def kill(self):
+        pass
+
+    @property
+    @abstractmethod
+    def ready_future(self) -> ray.ObjectRef:
+        pass
+
+
+class BlockWorker:
+    def __init__(self, fn, fn_constructor_args, fn_constructor_kwargs):
+        self._worker = _BlockWorker.remote(
+            fn, *fn_constructor_args, **fn_constructor_kwargs
+        )
+        self._ready_future = self._worker.ready.remote()
+
+    @property
+    def ready_future(self) -> ray.ObjectRef:
+        return self._ready_future
+
+    def submit(
+        self,
+        block_bundle: Tuple[List[ray.ObjectRef], List[BlockMetadata]],
+        order_index: int
+        fn_args,
+        fn_kwargs,
+    ) -> TaskResult:
+        blocks, metas = block_bundle
+        block, meta = self._worker.map_block_nosplit(
+            [f for meta in metas for f in meta.input_files],
+            len(blocks),
+            *(blocks + fn_args),
+            **fn_kwargs,
+        )
+        return TaskResult(ref=block, metadata=meta, order_index=order_index)
+
+    def kill(self):
+        ray.kill(self._worker)
+
+
+class ActorPool:
+    def __init__(self, config: ActorPoolConfig):
+        self._config = config
+        self._pending_workers: Dict[ray.ObjectRef, Worker] = {}
+        self._tasks_to_workers: Dict[ray.ObjectRef, Worker] = {}
+        self._tasks_to_results: Dict[ray.ObjectRef, TaskResult] = {}
+        self._workers_to_tasks: Dict[
+            Worker, Set[ray.ObjectRef]]
+        ] = collections.defaultdict(set)
+
+    def create_worker(self, *worker_constructor_args):
+        worker = Worker(*worker_constructor_args)
+        self._pending_workers[worker.ready_future] = worker
+
+    def wait_for_result_or_worker(
+        self, timeout: float
+    ) -> Tuple[Optional[TaskResult], Optional[Worker]]:
+        ready, _ = ray.wait(
+            list(self._tasks_to_workers.keys()) + list(self._pending_workers.keys()),
+            timeout=timeout,
+            num_returns=1,
+            fetch_local=False,
+        )
+        if not ready:
+            return None, None
+        task = ready[0]
+        if task in self._pending_workers:
+            worker = self._pending_workers.pop(task)
+            task_result = None
+        else:
+            worker = self._tasks_to_workers.pop(task)
+            task_result = self._tasks_to_results.pop(task)
+            self._workers_to_tasks[worker].discard(task)
+        return task_result, worker
+
+    def submit_tasks_up_to_capacity(self, block_bundles, worker, *task_args):
+        while (
+            block_bundles
+            and (
+                len(self._workers_to_tasks[worker])
+                < self.config.max_tasks_in_flight_per_worker
+            )
+        ):
+            block_bundle = block_bundles.pop()
+            task_result = worker.submit_task(
+                block_bundle, len(block_bundles), *task_args,
+            )
+            future = task_result.result_future
+            self._tasks_to_workers[future] = worker
+            self._tasks_to_results[future] = task_result
+            self._workers_to_tasks[worker].add(future)
+
+    def kill_pending_workers(self):
+        for worker in self._pending_workers.values():
+            worker.kill()
+
+    def kill_running_worker(self, worker):
+        for task in self._workers_to_tasks.pop(worker):
+            del self._tasks_to_workers
+            del self._tasks_to_results
+        worker.kill()
+
+    def kill_all_workers(self):
+        self._kill_pending_workers()
+        for worker in self._workers_to_tasks.keys():
+            self.kill_running_worker(worker)
+
+    @property
+    def num_pending_workers(self):
+        return len(self._pending_workers)
+
+    @property
+    def num_running_workers(self):
+        return len(self._workers_to_tasks)
+
+
+class ActorPoolExecutor:
+    def __init__(self, name: str, actor_pool: Optional[ActorPool] = None):
+        if actor_pool is None:
+            actor_pool = ActorPool()
+        else:
+            # TODO(Clark): Support sharing actor pools with pending workers.
+            assert actor_pool.num_pending_workers == 0
+        self._actor_pool: ActorPool = actor_pool
+        self._tasks: Dict[ray.ObjectRef, Tuple[TaskResult, ray.actor.ActorHandle]] = {}
+
+    def execute(blocks: BlockList) -> BlockList:
+        owned_by_consumer = blocks._owned_by_consumer
+        block_bundles = self._bundle_blocks(blocks)
+        del blocks
+        orig_num_blocks = len(block_bundles)
+        name = name.title()
+        map_bar = ProgressBar(name, total=orig_num_blocks)
+        for _ in range(self._autoscaling_policy.num_workers_to_prestart()):
+            self._actor_pool.add_worker()
+        map_bar.set_description(
+            "Map Progress ({} actors {} pending)".format(
+                (
+                    self._actor_pool.num_pending_workers
+                    + self._actor_pool.num_running_workers
+                ),
+                self._actor_pool.num_pending_workers,
+            )
+        )
+        results = []
+        while len(results) < orig_num_blocks:
+            # Wait for task to be done or a new worker to be ready: if the former, we
+            # have a task result to process; in either case, we have a worker available
+            # for running a new task.
+            result_or_worker = self._actor_pool.wait_for_result_or_worker(
+                self._autoscaling_policy.get_wait_timeout()
+            )
+            if result_or_worker is None:
+                # If no task done or worker ready before timeout, try to scale up the
+                # actor pool.
+                if self._autoscaling_policy.should_scale_up(
+                    self._actor_pool.num_pending_workers,
+                    self._actor_pool.num_running_workers,
+                    len(block_bundles),
+                ):
+                    self._actor_pool.add_worker()
+                continue
+
+            task_result, worker = result_or_worker
+            if task_result is not None:
+                # Task is done, add to results and update progress bar.
+                results.append(task_result)
+                map_bar.update(1)
+            else:
+                # New worker is ready, update the progress bar.
+                map_bar.set_description(
+                    "Map Progress ({} actors {} pending)".format(
+                        (
+                            self._actor_pool.num_pending_workers
+                            + self._actor_pool.num_running_workers
+                        ),
+                        self._actor_pool.num_pending_workers,
+                    )
+                )
+
+            # Submit as many tasks as possible to the worker, up to the worker's
+            # capacity.
+            block_bundles = self._actor_pool.submit_tasks_up_to_capacity(
+                block_bundles, worker,
+            )
+            # Try to scale down current worker.
+            if self._autoscaling_policy.should_scale_down_worker(
+                worker, len(block_bundles)
+            ):
+                self._actor_pool.kill_running_worker(worker)
+            # Try to scale down pending workers.
+            if self._autoscaling_policy.should_scale_down_pending_workers(
+                len(block_bundles)
+            ):
+                self._actor_pool.kill_pending_workers()
+        # Package results into block list.
+        return self._get_results(results, owned_by_consumer)
+
+    def _submit_task(
+        self,
+        block_bundle: Tuple[List[ray.ObjectRef], List[BlockMetadata]],
+        worker: ray.actor.ActorHandle
+    ):
+        blocks, metas = block_bundles.pop()
+        # TODO(swang): Support block splitting for compute="actors".
+        ref, meta_ref = worker.map_block_nosplit.remote(
+            [f for meta in metas for f in meta.input_files],
+            len(blocks),
+            *(blocks + self._fn_args),
+            **self._fn_kwargs,
+        )
+        self._tasks[ref] = (TaskResult(ref, meta_ref, len(block_bundles)), worker)
+        self._tasks_in_flight[worker] += 1
+
+    def _wait_for_result_or_worker(self):
+        ready, _ = ray.wait(
+            list(self._tasks.keys()) + self._actor_pool.pending_worker_futures,
+            timeout=0.01,
+            num_returns=1,
+            fetch_local=False,
+        )
+        return ready
+
+    def _prestart_workers(self):
+        for _ in range(self._autoscaling_policy.num_workers_to_prestart()):
+            self._actor_pool.create_worker()
+
+    def _scale_up_if_needed(self):
+        if self._autoscaling_policy.should_scale_up():
+            self._actor_pool.create_worker()
+
+    def _scale_down_if_needed(self, worker):
+        if self._autoscaling_policy.should_scale_down():
+            self._actor_pool.kill_pending_workers()
+
+    def _bundle_blocks(
+        self, blocks: BlockList, target_block_size: Optional[int], name: str,
+    ) -> List[Tuple[List[ray.ObjectRef], List[BlockMetadata]]]:
+        blocks = blocks.get_blocks_with_metadata()
+        # Bin blocks by target block size.
+        if target_block_size is not None:
+            _check_batch_size(blocks, target_block_size, name)
+            block_bundles = _bundle_blocks_up_to_size(
+                blocks, target_block_size, name
+            )
+        else:
+            block_bundles = [((b,), (m,)) for b, m in blocks]
+        return block_bundles
+
+    def _get_results(
+        self, results: List[ray.ObjectRef], owned_by_consumer: bool
+    ) -> BlockList:
+        new_blocks, new_metadata = [], []
+        # Put blocks in input order.
+        results.sort(key=self._block_indices.get)
+        # TODO(swang): Support block splitting for compute="actors".
+        for block in results:
+            new_blocks.append(block)
+            new_metadata.append(self._metadata_mapping[block])
+        new_metadata = ray.get(new_metadata)
+        return BlockList(
+            new_blocks, new_metadata, owned_by_consumer=owned_by_consumer
+        )
+
+
+class ActorPool:
+    def __init__(self):
+        self._pending_workers: Dict[ray.ObjectRef, ray.actor.ActorHandle] = {}
+        self._idle_workers: Set[ray.actor.ActorHandle]
+        self._leased_workers: Set[ray.actor.ActorHandle]
+
+    def create_pending_worker(self):
+        worker = self._worker_provider()
+        ready_future = worker.ready.remote()
+        self._pending_workers[ready_future] = ready_future
+
+    def lease_pending_worker(self, future: ray.ObjectRef) -> ray.actor.ActorHandle:
+        assert worker in self._pending_workers
+        worker = self._pending_workers.pop(future)
+        self.lease_worker(worker)
+        return worker
+
+    def return_worker_to_pool(self, worker: ray.actor.ActorHandle):
+        assert worker in self._leased_workers
+        assert worker not in self._pending_workers
+        assert worker not in self._idle_workers
+        self._leased_workers.discard(worker)
+        self._idle_workers.add(worker)
+
+    def lease_worker(self, worker: ray.actor.ActorHandle):
+        assert worker not in self._lease_worker
+        assert worker in self._idle_workers
+        self._idle_workers.discard(worker)
+        self._leased_workers.add(worker)
+
+    def is_future_for_pending_worker(self, future: ray.ObjectRef) -> bool:
+        return future in self._pending_workers
+
+    @property
+    def pending_worker_futures(self) -> List[ray.ObjectRef]:
+        return list(self._pending_workers.values())
+
+    @property
+    def num_idle_workers(self):
+        return len(self._idle_workers)
+
+    @property
+    def num_leased_workers(self):
+        return len(self._leased_workers)
+
+    @property
+    def num_pending_workers(self):
+        return len(self._pending_workers)
+
+    @property
+    def num_workers(self):
+        return (
+            self.num_pending_workers + self.num_idle_workers + self.num_leased_workers
+        )
+
+    def kill_worker(self, worker: ray.actor.ActorHandle):
+        self._pending_workers.discard(worker)
+        self._idle_workers.discard(worker)
+        self._leased_workers.discard(worker)
+        ray.kill(worker)
+
+    def kill_pending_workers(self):
+        for worker in self._pending_workers:
+            self.kill_worker(worker)
+
+    def shutdown(self):
+        for worker_set in [
+            self._pending_workers, self._idle_workers, self._leased_workers
+        ]:
+            for worker in worker_set:
+                self.kill_worker(worker)
+
+
+class ActorPoolExecutor:
+    def __init__(self, name: str, actor_pool: Optional[ActorPool] = None):
+        if actor_pool is None:
+            actor_pool = ActorPool()
+        else:
+            # TODO(Clark): Support sharing actor pools with pending workers.
+            assert actor_pool.num_pending_workers == 0
+        self._actor_pool: ActorPool = actor_pool
+        self._tasks: Dict[ray.ObjectRef, Tuple[TaskResult, ray.actor.ActorHandle]] = {}
+
+    def execute(blocks: BlockList) -> BlockList:
+        owned_by_consumer = blocks._owned_by_consumer
+        block_bundles = self._bundle_blocks(blocks)
+        del blocks
+        orig_num_blocks = len(block_bundles)
+        name = name.title()
+        map_bar = ProgressBar(name, total=orig_num_blocks)
+        self._prestart_workers()
+        results = []
+        while len(results) < orig_num_blocks:
+            # Wait for task to be done or a new worker to be ready: if the former, we
+            # have a task result to process; in either case, we have a worker available
+            # for running a new task.
+            future = self._wait_for_result_or_worker()
+            if future is None:
+                # If no task done or worker ready before timeout, try to scale up the
+                # actor pool.
+                self._scale_up_if_needed()
+                continue
+            if self._actor_pool.is_future_for_pending_worker(future):
+                worker = self._actor_pool.lease_pending_worker(future)
+                map_bar.set_description(
+                    "Map Progress ({} actors {} pending)".format(
+                        len(ready_workers), len(workers) - len(ready_workers)
+                    )
+                )
+            else:
+                task_result, worker = self._tasks.pop(future)
+                results.append(task_result)
+                self._tasks_in_flight[worker] -= 1
+                self._actor_pool.lease_worker(worker)
+                map_bar.update(1)
+            self._submit_tasks(block_bundles, worker)
+            # Schedule new tasks.
+            while (
+                block_bundles
+                and self._tasks_in_flight[worker] < self.max_tasks_in_flight_per_actor
+            ):
+                self._submit_task(block_bundles.pop(), worker)
+            self._actor_pool.return_worker_to_pool(worker)
+            if not block_bundles:
+                self._scale_down_if_needed(worker)
+        return self._get_results(results, owned_by_consumer)
+
+    def _submit_task(
+        self,
+        block_bundle: Tuple[List[ray.ObjectRef], List[BlockMetadata]],
+        worker: ray.actor.ActorHandle
+    ):
+        blocks, metas = block_bundles.pop()
+        # TODO(swang): Support block splitting for compute="actors".
+        ref, meta_ref = worker.map_block_nosplit.remote(
+            [f for meta in metas for f in meta.input_files],
+            len(blocks),
+            *(blocks + self._fn_args),
+            **self._fn_kwargs,
+        )
+        self._tasks[ref] = (TaskResult(ref, meta_ref, len(block_bundles)), worker)
+        self._tasks_in_flight[worker] += 1
+
+    def _wait_for_result_or_worker(self):
+        task_futures = [tr.ref for tr in self._tasks.keys()]
+        ready, _ = ray.wait(
+            task_futures + self._actor_pool.pending_worker_futures,
+            timeout=0.01,
+            num_returns=1,
+            fetch_local=False,
+        )
+        return ready
+
+    def _prestart_workers(self):
+        for _ in range(self._autoscaling_policy.num_workers_to_prestart()):
+            self._actor_pool.create_worker()
+
+    def _scale_up_if_needed(self):
+        if self._autoscaling_policy.should_scale_up():
+            self._actor_pool.create_worker()
+
+    def _scale_down_if_needed(self, worker):
+        if self._autoscaling_policy.should_scale_down():
+            self._actor_pool.kill_pending_workers()
+
+    def _bundle_blocks(
+        self, blocks: BlockList, target_block_size: Optional[int], name: str,
+    ) -> List[Tuple[List[ray.ObjectRef], List[BlockMetadata]]]:
+        blocks = blocks.get_blocks_with_metadata()
+        # Bin blocks by target block size.
+        if target_block_size is not None:
+            _check_batch_size(blocks, target_block_size, name)
+            block_bundles = _bundle_blocks_up_to_size(
+                blocks, target_block_size, name
+            )
+        else:
+            block_bundles = [((b,), (m,)) for b, m in blocks]
+        return block_bundles
+
+    def _get_results(
+        self, results: List[ray.ObjectRef], owned_by_consumer: bool
+    ) -> BlockList:
+        new_blocks, new_metadata = [], []
+        # Put blocks in input order.
+        results.sort(key=self._block_indices.get)
+        # TODO(swang): Support block splitting for compute="actors".
+        for block in results:
+            new_blocks.append(block)
+            new_metadata.append(self._metadata_mapping[block])
+        new_metadata = ray.get(new_metadata)
+        return BlockList(
+            new_blocks, new_metadata, owned_by_consumer=owned_by_consumer
+        )
 
 
 def get_compute(compute_spec: Union[str, ComputeStrategy]) -> ComputeStrategy:
