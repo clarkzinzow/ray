@@ -21,6 +21,8 @@ from ray._private.arrow_serialization import (
     _copy_normal_buffer_if_needed,
     _copy_bitpacked_buffer_if_needed,
     _copy_offsets_buffer_if_needed,
+    _primitive_array_to_array_payload,
+    PicklableArrayPayload,
 )
 from ray.data.extensions.tensor_extension import (
     ArrowTensorArray,
@@ -350,6 +352,28 @@ def complex_nested_array():
             ),
         ],
     )
+
+
+def _generic_check_payload_for_slice(payload: PicklableArrayPayload, a: pa.Array):
+    assert payload.type == a.type
+    assert payload.length == len(a)
+    assert payload.null_count == a.null_count
+    assert payload.offset == 0
+
+
+def test_primitive_array_to_array_payload(int_array_with_nulls):
+    offset = 18
+    length = 18
+    s = int_array_with_nulls.slice(offset, length)
+    # Slice should span 2 nulls, see int_array_with_nulls fixture.
+    payload = _primitive_array_to_array_payload(s)
+    _generic_check_payload_for_slice(payload, s)
+    assert len(payload.buffers) == 2
+    bitmap_buf, data_buf = payload.buffers
+    assert bitmap_buf is not None
+    assert bitmap_buf.size == 3
+    assert data_buf is not None
+    assert data_buf.size == length * 8
 
 
 pytest_custom_serialization_arrays = [
