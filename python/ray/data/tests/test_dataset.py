@@ -3,7 +3,9 @@ import math
 import os
 import random
 import signal
+import sys
 import time
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -5145,6 +5147,33 @@ def test_dataset_retry_exceptions(ray_start_regular, local_path):
         ).take()
 
 
+@patch("ray.cancel", wraps=ray.cancel)
+@pytest.mark.parametrize("crash_worker", [False, True])
+def test_dataset_task_cancellation_on_failure(
+    mock_ray_cancel, ray_start_regular_shared, crash_worker
+):
+    N = 10
+    ds = ray.data.range(N, parallelism=N).fully_executed()
+
+    def flaky_mapper(x):
+        if x % 2 == 0:
+            if crash_worker:
+                os._exit(1)
+            else:
+                raise ValueError("oops")
+        else:
+            time.sleep(10)
+            # Should never be reached.
+            assert False
+
+    with pytest.raises(
+        ray.exceptions.WorkerCrashedError if crash_worker else ValueError
+    ):
+        ds.map(flaky_mapper, retry_exceptions=False)
+
+    assert mock_ray_cancel.call_count == N
+
+
 def test_split_is_not_disruptive(ray_start_regular):
     ds = ray.data.range(100, parallelism=10).map_batches(lambda x: x).lazy()
 
@@ -5292,6 +5321,4 @@ def test_dataset_schema_after_read_stats(ray_start_cluster):
 
 
 if __name__ == "__main__":
-    import sys
-
     sys.exit(pytest.main(["-v", __file__]))

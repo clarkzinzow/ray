@@ -134,33 +134,18 @@ class TaskPoolStrategy(ComputeStrategy):
             block_list.clear()
 
         # Common wait for non-data refs.
-        try:
+        with _CancelIfAnyFail(refs):
             results = map_bar.fetch_until_complete(refs)
-        except (ray.exceptions.RayError, KeyboardInterrupt) as e:
-            # One or more mapper tasks failed, or we received a SIGINT signal
-            # while waiting; either way, we cancel all map tasks.
-            for ref in refs:
-                ray.cancel(ref)
-            # Wait until all tasks have failed or been cancelled.
-            for ref in refs:
-                try:
-                    ray.get(ref)
-                except ray.exceptions.RayError:
-                    # Cancellation either succeeded, or the task had already failed with
-                    # a different error, or cancellation failed. In all cases, we
-                    # swallow the exception.
-                    pass
-            # Reraise the original task failure exception.
-            raise e from None
 
         new_blocks, new_metadata = [], []
         if context.block_splitting_enabled:
-            for ref_generator in results:
-                refs = list(ref_generator)
-                metadata = ray.get(refs.pop(-1))
-                assert len(metadata) == len(refs)
-                new_blocks += refs
-                new_metadata += metadata
+            with _CancelIfAnyFail(refs):
+                for ref_generator in results:
+                    refs = list(ref_generator)
+                    metadata = ray.get(refs.pop(-1))
+                    assert len(metadata) == len(refs)
+                    new_blocks += refs
+                    new_metadata += metadata
         else:
             for block, metadata in zip(data_refs, results):
                 new_blocks.append(block)
@@ -170,6 +155,32 @@ class TaskPoolStrategy(ComputeStrategy):
             list(new_metadata),
             owned_by_consumer=in_block_owned_by_consumer,
         )
+
+
+class _CancelIfAnyFail:
+    def __init__(self, refs):
+        self.refs = refs
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        # TODO(Clark): Scope to RayError.
+        # TODO(Clark): Handle KeyboardInterrupt.
+        if exc_value is not None:
+            # One or more mapper tasks failed, or we received a SIGINT signal
+            # while waiting; either way, we cancel all map tasks.
+            for ref in self.refs:
+                ray.cancel(ref)
+            # Wait until all tasks have failed or been cancelled.
+            for ref in self.refs:
+                try:
+                    ray.get(ref)
+                except ray.exceptions.RayError:
+                    # Cancellation either succeeded, or the task had already failed with
+                    # a different error, or cancellation failed. In all cases, we
+                    # swallow the exception.
+                    pass
 
 
 @PublicAPI
