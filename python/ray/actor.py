@@ -739,6 +739,7 @@ class ActorClass:
                 except ValueError:
                     # We lost the creation race, ignore.
                     pass
+                print("Attempted to create the actor and then lost creation race.")
                 return ray.get_actor(name, namespace=namespace)
 
         # We pop the "concurrency_groups" coming from "@ray.remote" here. We no longer

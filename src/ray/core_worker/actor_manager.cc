@@ -212,7 +212,7 @@ void ActorManager::HandleActorStateNotification(const ActorID &actor_id,
                                                 const rpc::ActorTableData &actor_data) {
   const auto &actor_state = rpc::ActorTableData::ActorState_Name(actor_data.state());
   RAY_LOG(INFO) << "received notification on actor, state: " << actor_state
-                << ", actor_id: " << actor_id
+                << ", actor_id: " << actor_id << ", name: " << actor_data.name()
                 << ", ip address: " << actor_data.address().ip_address()
                 << ", port: " << actor_data.address().port() << ", worker_id: "
                 << WorkerID::FromBinary(actor_data.address().worker_id())
@@ -254,21 +254,32 @@ std::vector<ObjectID> ActorManager::GetActorHandleIDsFromHandles() {
 }
 
 ActorID ActorManager::GetCachedNamedActorID(const std::string &actor_name) {
-  auto actor_id = ActorID::Nil();
   {
     absl::MutexLock lock(&cache_mutex_);
     auto it = cached_actor_name_to_ids_.find(actor_name);
-    if (it == cached_actor_name_to_ids_.end()) {
-      return actor_id;
+    if (it != cached_actor_name_to_ids_.end()) {
+      absl::MutexLock lock(&mutex_);
+      auto handle_it = actor_handles_.find(it->second);
+      RAY_CHECK(handle_it != actor_handles_.end());
+      return it->second;
     }
-    actor_id = it->second;
   }
-  {
-    absl::MutexLock lock(&mutex_);
-    auto handle_it = actor_handles_.find(actor_id);
-    RAY_CHECK(handle_it != actor_handles_.end());
-  }
-  return actor_id;
+  return ActorID::Nil();
+  /* auto actor_id = ActorID::Nil(); */
+  /* { */
+  /*   absl::MutexLock lock(&cache_mutex_); */
+  /*   auto it = cached_actor_name_to_ids_.find(actor_name); */
+  /*   if (it == cached_actor_name_to_ids_.end()) { */
+  /*     return actor_id; */
+  /*   } */
+  /*   actor_id = it->second; */
+  /* } */
+  /* { */
+  /*   absl::MutexLock lock(&mutex_); */
+  /*   auto handle_it = actor_handles_.find(actor_id); */
+  /*   RAY_CHECK(handle_it != actor_handles_.end()); */
+  /* } */
+  /* return actor_id; */
 }
 
 void ActorManager::SubscribeActorState(const ActorID &actor_id) {

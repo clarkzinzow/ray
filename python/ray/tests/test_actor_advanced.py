@@ -1351,6 +1351,38 @@ def test_get_actor_race_condition(shutdown_only):
         assert ["ok"] * CONCURRENCY == results
 
 
+def test_cached_actor_race_condition(ray_start_regular):
+    namespace = "test"
+
+    @ray.remote(num_cpus=0)
+    class Actor:
+        def ping(self):
+            return "ok"
+
+    @ray.remote(num_cpus=0)
+    def get_or_create(name):
+        actor = Actor.options(
+            name=name, namespace=namespace, get_if_exists=True, lifetime="detached"
+        ).remote()
+        return ray.get(actor.ping.remote())
+
+    def do_run(name, concurrency=4):
+        name = "actor_" + str(name)
+        tasks = [get_or_create.remote(name) for _ in range(concurrency)]
+        result = ray.get(tasks)
+        try:
+            ray.kill(ray.get_actor(name, namespace=namespace))  # Cleanup
+        except ValueError:
+            # Assume that actor is already dead.
+            pass
+        return result
+
+    for i in range(50):
+        CONCURRENCY = 8
+        results = do_run(i, concurrency=CONCURRENCY)
+        assert ["ok"] * CONCURRENCY == results
+
+
 def test_get_actor_in_remote_workers(ray_start_cluster):
     """Make sure we can get and create actors without
     race condition in a remote worker.
