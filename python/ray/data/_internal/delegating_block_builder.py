@@ -3,6 +3,7 @@ from typing import Any
 import numpy as np
 
 from ray.data.block import Block, DataBatch, T, BlockAccessor
+from ray.data._internal.metrics import DataMungingMetrics
 from ray.data._internal.block_builder import BlockBuilder
 from ray.data._internal.simple_block import SimpleBlockBuilder
 from ray.data._internal.arrow_block import ArrowRow, ArrowBlockBuilder
@@ -55,6 +56,11 @@ class DelegatingBlockBuilder(BlockBuilder[T]):
             self._builder = accessor.builder()
         self._builder.add_block(block)
 
+    def will_build_yield_copy(self) -> bool:
+        if self._builder is None:
+            return True
+        return self._builder.will_build_yield_copy()
+
     def build(self) -> Block:
         if self._builder is None:
             if self._empty_block is not None:
@@ -71,3 +77,6 @@ class DelegatingBlockBuilder(BlockBuilder[T]):
         if self._builder is None:
             return 0
         return self._builder.get_estimated_memory_usage()
+
+    def get_metrics(self) -> DataMungingMetrics:
+        return self._builder.get_metrics()

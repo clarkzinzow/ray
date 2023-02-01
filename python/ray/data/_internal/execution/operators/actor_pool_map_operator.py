@@ -88,7 +88,8 @@ class ActorPoolMapOperator(MapOperator):
     def _start_actor(self):
         """Start a new actor and add it to the actor pool as a pending actor."""
         assert self._cls is not None
-        actor = self._cls.remote()
+        ctx = DatasetContext.get_current()
+        actor = self._cls.remote(ctx)
         self._actor_pool.add_pending_actor(actor, actor.get_location.remote())
 
     def _add_bundled_input(self, bundle: RefBundle):
@@ -235,7 +236,7 @@ class ActorPoolMapOperator(MapOperator):
         return ExecutionResources(
             cpu=self._ray_remote_args.get("num_cpus", 0) * num_active_workers,
             gpu=self._ray_remote_args.get("num_gpus", 0) * num_active_workers,
-            object_store_memory=self._metrics.cur,
+            object_store_memory=self._metrics.object_store_metrics.cur,
         )
 
     def incremental_resource_usage(self) -> ExecutionResources:
@@ -278,6 +279,9 @@ class ActorPoolMapOperator(MapOperator):
 
 class _MapWorker:
     """An actor worker for MapOperator."""
+
+    def __init__(self, ctx: DatasetContext):
+        DatasetContext._set_current(ctx)
 
     def get_location(self) -> NodeIdStr:
         return ray.get_runtime_context().get_node_id()

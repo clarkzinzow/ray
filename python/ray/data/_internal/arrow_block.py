@@ -127,6 +127,10 @@ class ArrowBlockBuilder(TableBlockBuilder[T]):
         return transform_pyarrow.concat(tables)
 
     @staticmethod
+    def _concat_would_copy() -> bool:
+        return False
+
+    @staticmethod
     def _empty_table() -> "pyarrow.Table":
         return pyarrow.Table.from_pydict({})
 
@@ -214,6 +218,9 @@ class ArrowBlockAccessor(TableBlockAccessor):
             view = _copy_table(view)
         return view
 
+    def does_slice_always_copy(self) -> bool:
+        return False
+
     def random_shuffle(self, random_seed: Optional[int]) -> "pyarrow.Table":
         random = np.random.RandomState(random_seed)
         return self.take(random.permutation(self.num_rows()))
@@ -224,7 +231,7 @@ class ArrowBlockAccessor(TableBlockAccessor):
     def to_pandas(self) -> "pandas.DataFrame":
         from ray.air.util.data_batch_conversion import _cast_tensor_columns_to_ndarrays
 
-        df = self._table.to_pandas()
+        df = self._table.to_pandas(use_threads=False)
         ctx = DatasetContext.get_current()
         if ctx.enable_tensor_extension_casting:
             df = _cast_tensor_columns_to_ndarrays(df)

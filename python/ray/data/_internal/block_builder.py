@@ -1,6 +1,7 @@
 from typing import Generic
 
 from ray.data.block import Block, BlockAccessor, T
+from ray.data._internal.metrics import DataMungingMetrics
 
 
 class BlockBuilder(Generic[T]):
@@ -18,6 +19,10 @@ class BlockBuilder(Generic[T]):
         """Append an entire block to the block being built."""
         raise NotImplementedError
 
+    def will_build_yield_copy(self) -> bool:
+        """Whether building this block will yield a new block copy."""
+        raise NotImplementedError
+
     def build(self) -> Block:
         """Build the block."""
         raise NotImplementedError
@@ -28,4 +33,7 @@ class BlockBuilder(Generic[T]):
 
     def get_estimated_memory_usage(self) -> int:
         """Return the estimated memory usage so far in bytes."""
+        raise NotImplementedError
+
+    def get_metrics(self) -> DataMungingMetrics:
         raise NotImplementedError
