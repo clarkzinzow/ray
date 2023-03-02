@@ -50,7 +50,8 @@ using AsyncBidiStreamingMethod = void (GrpcService::StubInterface::async_interfa
     grpc::ClientContext *context, grpc::ClientBidiReactor<Request, Reply> *reactor);
 
 // Define a unary RPC client method.
-#define UNARY_CALLBACK_RPC_CLIENT_METHOD(SERVICE, METHOD, rpc_client, SPECS)    \
+#define UNARY_CALLBACK_RPC_CLIENT_METHOD(                                       \
+    SERVICE, METHOD, rpc_client, method_timeout_ms, SPECS)                      \
   void METHOD(const METHOD##Request &request,                                   \
               const ClientCallback<METHOD##Reply> &callback,                    \
               std::shared_ptr<grpc::ClientContext> ctx = nullptr) SPECS {       \
@@ -59,6 +60,7 @@ using AsyncBidiStreamingMethod = void (GrpcService::StubInterface::async_interfa
             &SERVICE::Stub::async::METHOD),                                     \
         request,                                                                \
         callback,                                                               \
+        method_timeout_ms,                                                      \
         ctx,                                                                    \
         #SERVICE ".grpc_client." #METHOD);                                      \
   }
@@ -265,6 +267,7 @@ class GrpcCallbackClient {
   void CallUnaryMethod(const AsyncUnaryMethod<GrpcService, Request, Reply> method,
                        const Request &request,
                        const ClientCallback<Reply> &callback,
+                       int64_t method_timeout_ms = -1,
                        std::shared_ptr<grpc::ClientContext> ctx = nullptr,
                        const std::string call_name = "UNKNOWN_RPC") {
     // We use shared pointers for the client context and response in order to let the
@@ -274,6 +277,15 @@ class GrpcCallbackClient {
     // raw pointers without breaking the shared pointers' reference counting.
     if (ctx == nullptr) {
       ctx = std::make_shared<grpc::ClientContext>();
+    }
+    if (method_timeout_ms != -1) {
+      // Only set method-level deadline if call-level deadline is unset.
+      auto call_deadline = ctx.raw_deadline();
+      if (call_deadline.tv_sec == 0 && call_deadline.tv_nsec == 0) {
+        auto deadline =
+            std::chrono::system_clock::now() + std::chrono::milliseconds(timeout_ms);
+        ctx.set_deadline(deadline);
+      }
     }
     auto response = std::make_shared<Reply>();
     auto stats_handle = io_context_.stats().RecordStart(call_name);
