@@ -161,6 +161,16 @@ def ray_deps_setup():
     )
 
     auto_http_archive(
+        name = "arrow",
+        build_file = True,
+        url = "https://github.com/apache/arrow/archive/f10f5cfd1376fb0e602334588b3f3624d41dee7d.tar.gz",
+        sha256 = "b399c26f81519b9f09169ae87b7c404108b58c50166663808581e0604ef1c942",
+        patches = [
+            "@com_github_ray_project_ray//thirdparty/patches:arrow-ThirdPartyToolchain-cmake.patch",
+        ],
+    )
+
+    auto_http_archive(
         name = "com_github_nelhage_rules_boost",
         # If you update the Boost version, remember to update the 'boost' rule.
         url = "https://github.com/nelhage/rules_boost/archive/57c99395e15720e287471d79178d36a85b64d6f6.tar.gz",

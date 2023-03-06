@@ -1,95 +1,135 @@
-# TODO(mehrdadn): (How to) support dynamic linking?
-PROPAGATED_WINDOWS_DEFINES = ["ARROW_STATIC"]
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
 
-COPTS = [] + select({
-    "@bazel_tools//src/conditions:windows": [
-        "-D" + define
-        for define in PROPAGATED_WINDOWS_DEFINES
-    ],
-    "//conditions:default": [
-        "-DARROW_USE_GLOG",
-    ],
-})
+package(default_visibility = ["//visibility:public"])
 
-LINKOPTS = [] + select({
-    "@bazel_tools//src/conditions:windows": [
-        "-DefaultLib:" + "ws2_32.lib",
-    ],
-    "//conditions:default": [
-    ],
-})
-
-cc_library(
-    name = "arrow",
-    srcs = [
-        "cpp/src/arrow/buffer.cc",
-        "cpp/src/arrow/device.cc",
-        "cpp/src/arrow/io/interfaces.cc",
-        "cpp/src/arrow/io/memory.cc",
-        "cpp/src/arrow/memory_pool.cc",
-        "cpp/src/arrow/result.cc",
-        "cpp/src/arrow/status.cc",
-        "cpp/src/arrow/util/future.cc",
-        "cpp/src/arrow/util/io_util.cc",
-        "cpp/src/arrow/util/logging.cc",
-        "cpp/src/arrow/util/memory.cc",
-        "cpp/src/arrow/util/string.cc",
-        "cpp/src/arrow/util/string_builder.cc",
-        "cpp/src/arrow/util/thread_pool.cc",
-        "cpp/src/arrow/util/utf8.cc",
-    ],
-    hdrs = [
-        "cpp/src/arrow/buffer.h",
-        "cpp/src/arrow/device.h",
-        "cpp/src/arrow/io/concurrency.h",
-        "cpp/src/arrow/io/interfaces.h",
-        "cpp/src/arrow/io/memory.h",
-        "cpp/src/arrow/io/mman.h",
-        "cpp/src/arrow/io/type_fwd.h",
-        "cpp/src/arrow/io/util_internal.h",
-        "cpp/src/arrow/memory_pool.h",
-        "cpp/src/arrow/result.h",
-        "cpp/src/arrow/status.h",
-        "cpp/src/arrow/type_fwd.h",
-        "cpp/src/arrow/util/bit_util.h",
-        "cpp/src/arrow/util/checked_cast.h",
-        "cpp/src/arrow/util/compare.h",
-        "cpp/src/arrow/util/functional.h",
-        "cpp/src/arrow/util/future.h",
-        "cpp/src/arrow/util/io_util.h",
-        "cpp/src/arrow/util/iterator.h",
-        "cpp/src/arrow/util/logging.h",
-        "cpp/src/arrow/util/macros.h",
-        "cpp/src/arrow/util/make_unique.h",
-        "cpp/src/arrow/util/memory.h",
-        "cpp/src/arrow/util/optional.h",
-        "cpp/src/arrow/util/string.h",
-        "cpp/src/arrow/util/string_builder.h",
-        "cpp/src/arrow/util/string_view.h",
-        "cpp/src/arrow/util/thread_pool.h",
-        "cpp/src/arrow/util/type_traits.h",
-        "cpp/src/arrow/util/ubsan.h",
-        "cpp/src/arrow/util/utf8.h",
-        "cpp/src/arrow/util/variant.h",
-        "cpp/src/arrow/util/visibility.h",
-        "cpp/src/arrow/util/windows_compatibility.h",
-        "cpp/src/arrow/util/windows_fixup.h",
-        "cpp/src/arrow/vendored/optional.hpp",
-        "cpp/src/arrow/vendored/string_view.hpp",
-        "cpp/src/arrow/vendored/utf8cpp/checked.h",
-        "cpp/src/arrow/vendored/utf8cpp/core.h",
-        "cpp/src/arrow/vendored/variant.hpp",
-        "cpp/src/arrow/vendored/xxhash.h",
-        "cpp/src/arrow/vendored/xxhash/xxh3.h",
-        "cpp/src/arrow/vendored/xxhash/xxhash.c",
-        "cpp/src/arrow/vendored/xxhash/xxhash.h",
-    ],
-    copts = COPTS,
-    linkopts = LINKOPTS,
-    strip_include_prefix = "cpp/src",
-    visibility = ["//visibility:public"],
-    deps = [
-        "@boost//:filesystem",
-        "@com_github_google_glog//:glog",
-    ],
+filegroup(
+    name = "all_srcs",
+    srcs = glob(["**"]),
 )
+
+cmake(
+    name = "arrow",
+    build_args = [
+        "-j `nproc`",
+    ],
+    cache_entries = {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ARROW_BUILD_SHARED": "OFF",
+        "ARROW_BUILD_STATIC": "ON",
+        "ARROW_BUILD_TESTS": "OFF",
+    },
+    lib_source = ":all_srcs",
+    out_static_libs = ["libarrow.a"],
+    working_directory = "cpp",
+    deps = [],
+    tags = ["requires-network"],
+)
+
+
+# # TODO(mehrdadn): (How to) support dynamic linking?
+# PROPAGATED_WINDOWS_DEFINES = ["ARROW_STATIC"]
+
+# genrule(
+#     name = "arrow_util_config",
+#     srcs = ["cpp/src/arrow/util/config.h.cmake"],
+#     outs = ["cpp/src/arrow/util/config.h"],
+#     cmd = ("sed " +
+#            "-e 's/@ARROW_VERSION_MAJOR@/3/g' " +
+#            "-e 's/@ARROW_VERSION_MINOR@/0/g' " +
+#            "-e 's/@ARROW_VERSION_PATCH@/0/g' " +
+#            "-e 's/cmakedefine ARROW_USE_NATIVE_INT128/undef ARROW_USE_NATIVE_INT128/g' " +
+#            "-e 's/cmakedefine/define/g' " +
+#            "$< >$@"),
+# )
+
+# genrule(
+#     name = "parquet_version_h",
+#     srcs = ["cpp/src/parquet/parquet_version.h.in"],
+#     outs = ["cpp/src/parquet/parquet_version.h"],
+#     cmd = ("sed " +
+#            "-e 's/@PARQUET_VERSION_MAJOR@/1/g' " +
+#            "-e 's/@PARQUET_VERSION_MINOR@/5/g' " +
+#            "-e 's/@PARQUET_VERSION_PATCH@/1/g' " +
+#            "$< >$@"),
+# )
+
+# COPTS = [] + select({
+#     "@bazel_tools//src/conditions:windows": [
+#         "-D" + define
+#         for define in PROPAGATED_WINDOWS_DEFINES
+#     ],
+#     "//conditions:default": [
+#         "-DARROW_USE_GLOG",
+#     ],
+# })
+
+# LINKOPTS = [] + select({
+#     "@bazel_tools//src/conditions:windows": [
+#         "-DefaultLib:" + "ws2_32.lib",
+#     ],
+#     "//conditions:default": [
+#     ],
+# })
+
+# hdrs = [
+#     "cpp/src/arrow/buffer.h",
+#     "cpp/src/arrow/device.h",
+#     "cpp/src/arrow/memory_pool.h",
+#     "cpp/src/arrow/result.h",
+#     "cpp/src/arrow/status.h",
+#     "cpp/src/arrow/type_fwd.h",
+#     "cpp/src/arrow/util/memory.h",
+#     # Built by above genrule.
+#     "cpp/src/arrow/util/config.h",
+#     "cpp/src/parquet/parquet_version.h",
+# ]
+
+# cc_library(
+#     name = "arrow",
+#     srcs = glob(
+#         [
+#             "cpp/src/arrow/*.cc",
+#             "cpp/src/arrow/array/*.cc",
+#             "cpp/src/arrow/csv/*.cc",
+#             "cpp/src/arrow/io/*.cc",
+#             "cpp/src/arrow/ipc/*.cc",
+#             "cpp/src/arrow/json/*.cc",
+#             "cpp/src/arrow/tensor/*.cc",
+#             "cpp/src/arrow/util/*.cc",
+#             "cpp/src/arrow/vendored/optional.hpp",
+#             "cpp/src/arrow/vendored/string_view.hpp",
+#             "cpp/src/arrow/vendored/variant.hpp",
+#             "cpp/src/arrow/**/*.h",
+#             "cpp/src/parquet/**/*.h",
+#             "cpp/src/parquet/**/*.cc",
+#             "cpp/src/generated/*.h",
+#             "cpp/src/generated/*.cpp",
+#             "cpp/thirdparty/flatbuffers/include/flatbuffers/*.h",
+# 	],
+#         exclude = hdrs + [
+#             "cpp/src/**/*_benchmark.cc",
+#             "cpp/src/**/*_main.cc",
+#             "cpp/src/**/*_nossl.cc",
+#             "cpp/src/**/*_test.cc",
+#             "cpp/src/**/test_*.cc",
+#             "cpp/src/**/*hdfs*.cc",
+#             "cpp/src/**/*fuzz*.cc",
+#             "cpp/src/**/file_to_stream.cc",
+#             "cpp/src/**/stream_to_file.cc",
+#             "cpp/src/arrow/util/bpacking_avx2.cc",
+#             "cpp/src/arrow/util/bpacking_avx512.cc",
+#             "cpp/src/arrow/util/bpacking_neon.cc",
+#             "cpp/src/arrow/util/tracing_internal.cc",
+#         ],
+#     ),
+#     hdrs = hdrs,
+#     includes=["cpp/src"],
+#     copts = COPTS,
+#     linkopts = LINKOPTS,
+#     strip_include_prefix = "cpp/src",
+#     visibility = ["//visibility:public"],
+#     deps = [
+#         "@boost//:numeric_conversion",
+#         "@boost//:multiprecision",
+#     ],
+# )
